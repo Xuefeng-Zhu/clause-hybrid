@@ -118,5 +118,6 @@
       "coreVersion": "0.226.0",
       "shape": "standalone"
     }
-  }
+  },
+  "license": "Apache-2.0"
 }
