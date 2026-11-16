@@ -9,7 +9,10 @@
 import { getGenerativeModel, InferenceMode, type AI } from "firebase/ai";
 import { z } from "zod";
 
+import { stripNulls } from "../../shared/clause-ai/validate.js";
 import { getDefaultCloudModel, getFirebaseAI, getRemoteConfigString } from "./firebase";
+
+export { stripNulls };
 
 export type HybridMode = "prefer_on_device" | "only_on_device" | "prefer_in_cloud" | "only_in_cloud";
 export type AiSource = "on_device" | "in_cloud";
@@ -61,17 +64,6 @@ export function toOnDeviceJsonSchema(json: Record<string, unknown>): Record<stri
     properties[key] = required.has(key) || "default" in value ? value : { anyOf: [value, { type: "null" }] };
   }
   return { ...json, properties, required: Object.keys(props) };
-}
-
-/** Drop null values (recursively) so optional fields the model marked "not present" parse as absent. */
-export function stripNulls(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripNulls);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) if (v !== null) out[k] = stripNulls(v);
-    return out;
-  }
-  return value;
 }
 
 /** Strip a ```json fence if a model wraps its answer in one. */
