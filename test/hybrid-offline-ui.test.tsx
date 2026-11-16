@@ -34,6 +34,7 @@ import { ActionBar } from "../app/components/clause/ActionBar";
 import { ContractorPhone } from "../app/components/clause/ContractorPhone";
 import { EmptyJobState } from "../app/components/clause/NewJobDialog";
 import type { ClauseJob, JobSummary } from "../app/components/clause/clause-types";
+import { downscaleImageToJpeg } from "../app/lib/clause-ai/evidence";
 import { NEEDS_CONNECTION_MESSAGE } from "../app/lib/hybrid-ai";
 import { MockIssuingGateway } from "../server/clause/airwallex/mock";
 import { POLICY_DEMO_CHARGES, SAMPLES, summarize } from "../server/clause/app";
@@ -177,5 +178,121 @@ describe("offline needs-connection UI notices", () => {
 
     const badge = document.querySelector("[data-testid='ai-source-badge']");
     expect(badge?.textContent).toContain("Cloud · gemini-3.5-flash-lite · 950 ms");
+  });
+
+  it("renders AiSourceBadge on pending milestone proof release in ActionBar", async () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    config.anthropic.apiKey = undefined;
+    const svc = new ContractCardService(
+      new MockIssuingGateway(),
+      new MemoryJobStore(),
+      "owner@example.com",
+    );
+    let contractJob = await svc.createJob({ kind: "text", text: SAMPLES.quote });
+    contractJob = await svc.approveTerms(contractJob.id);
+    contractJob = await svc.submitProof(
+      contractJob.id,
+      [
+        {
+          filename: "cabinets-installed.jpg",
+          mediaType: "image/jpeg",
+          base64: Buffer.alloc(128, 1).toString("base64"),
+          declaredKind: "photos",
+        },
+      ],
+      {
+        verdict: {
+          verdict: "meets",
+          reasoning: "Completed cabinetry visible in site photo.",
+          observed: ["Maple cabinets installed"],
+          missing: [],
+        },
+        aiSource: { source: "in_cloud", model: "gemini-3.5-flash-lite", ms: 1200 },
+      },
+    );
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root!.render(
+        createElement(ActionBar, {
+          job: contractJob as unknown as ClauseJob,
+          summary: summarize(contractJob) as unknown as JobSummary,
+          busyLabel: null,
+          onCancelBusy: () => {},
+          onApproveTerms: () => {},
+          proofSheetOpen: false,
+          onProofSheetOpenChange: () => {},
+          proofKind: "photos",
+          onProofKindChange: () => {},
+          proofInputRef: createRef<HTMLInputElement>(),
+          stagedProofFiles: [],
+          onStageSelectedFiles: () => {},
+          onRemoveStagedFile: () => {},
+          onSubmitProof: () => {},
+          onApproveRelease: () => {},
+          coSheetOpen: false,
+          onCoSheetOpenChange: () => {},
+          coEmailText: "",
+          onCoEmailTextChange: () => {},
+          onDraftChangeOrder: () => {},
+          onApproveChangeOrder: () => {},
+          onRejectPending: () => {},
+        }),
+      );
+    });
+
+    const badge = document.querySelector("[data-testid='ai-source-badge']");
+    expect(badge?.textContent).toContain("Cloud · gemini-3.5-flash-lite · 1.2 s");
+  });
+
+  it("downscales browser evidence images to a single max-768px JPEG via canvas", async () => {
+    const drawImage = vi.fn();
+    const toDataURL = vi.fn(() => "data:image/jpeg;base64,RESIZEDJPEG123");
+    const mockCanvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage }),
+      toDataURL,
+    };
+    const origCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation(((tag: string) => {
+      if (tag === "canvas") return mockCanvas as unknown as HTMLCanvasElement;
+      return origCreateElement(tag);
+    }) as typeof document.createElement);
+
+    class MockImage {
+      naturalWidth = 1536;
+      naturalHeight = 1024;
+      width = 1536;
+      height = 1024;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_val: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    vi.stubGlobal("Image", MockImage);
+
+    try {
+      const out = await downscaleImageToJpeg({
+        mediaType: "image/png",
+        base64: "ORIGINALPNG",
+      });
+      expect(out).toEqual({
+        mimeType: "image/jpeg",
+        base64: "RESIZEDJPEG123",
+        width: 768,
+        height: 512,
+      });
+      expect(mockCanvas.width).toBe(768);
+      expect(mockCanvas.height).toBe(512);
+      expect(drawImage).toHaveBeenCalledWith(expect.any(MockImage), 0, 0, 768, 512);
+      expect(toDataURL).toHaveBeenCalledWith("image/jpeg", 0.82);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -6,7 +6,7 @@
  * and the server can record it. The model only ever returns structured JSON; money decisions
  * stay in deterministic code.
  */
-import { getGenerativeModel, InferenceMode, type AI } from "firebase/ai";
+import { getGenerativeModel, InferenceMode, type AI, type Part } from "firebase/ai";
 import { z } from "zod";
 
 import { stripNulls } from "../../shared/clause-ai/validate.js";
@@ -29,9 +29,15 @@ export interface HybridResult<T> {
   ms: number;
 }
 
+export interface HybridImageInput {
+  mimeType: "image/jpeg" | "image/png";
+  base64: string;
+}
+
 export interface HybridRequest<S extends z.ZodTypeAny> {
   system: string;
   prompt: string;
+  image?: HybridImageInput;
   schema: S;
   step?: AiStep;
   mode?: HybridMode;
@@ -157,7 +163,9 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
     },
     onDeviceParams: {
       createOptions: {
-        expectedInputs: [{ type: "text", languages: ["en"] }],
+        expectedInputs: req.image
+          ? [{ type: "image" }, { type: "text", languages: ["en"] }]
+          : [{ type: "text", languages: ["en"] }],
         expectedOutputs: [{ type: "text", languages: ["en"] }],
         initialPrompts: [{ role: "system", content: [{ type: "text", value: req.system }] }],
       },
@@ -166,7 +174,16 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
   });
 
   const started = now();
-  const result = await model.generateContent(req.prompt);
+  const content: string | Part[] = req.image
+    ? [
+        { type: "text", text: req.prompt },
+        {
+          type: "inlineData",
+          inlineData: { mimeType: req.image.mimeType, data: req.image.base64 },
+        },
+      ]
+    : req.prompt;
+  const result = await model.generateContent(content);
   const ms = Math.round(now() - started);
   const response = result.response;
   const source: AiSource =

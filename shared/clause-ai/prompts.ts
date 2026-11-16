@@ -89,6 +89,36 @@ export function changeOrderPrompt(terms: PromptContractContext, emailText: strin
   return `<terms>${JSON.stringify(terms)}</terms>\n<email>${emailText}</email>`;
 }
 
+export interface PromptMilestoneContext {
+  id: string;
+  name: string;
+  release_condition: string;
+  evidence_required: string[];
+  clause: { clause_id: string; quote: string };
+}
+
+const EVIDENCE_SYSTEM_BODY = `You review construction progress evidence for a small-business owner. You recommend a verdict; the owner decides whether to release milestone funds.
+Rules:
+- Judge whether the submitted evidence shows the milestone release condition is genuinely met.
+- Be skeptical: stock photos, a different room, unfinished work, blurry/unreadable captures, or a report for a different address are "insufficient". If you cannot tell, answer "unclear".
+- List concrete things seen in observed and anything lacking in missing.`;
+
+export const EVIDENCE_SYSTEM = `${EVIDENCE_SYSTEM_BODY}
+Return only JSON that matches the provided schema.`;
+
+export const EVIDENCE_TOOL_SYSTEM = `${EVIDENCE_SYSTEM_BODY}
+Return the result only through the record_verdict tool.`;
+
+export function evidencePrompt(
+  milestone: PromptMilestoneContext,
+  files: Array<{ filename: string; declaredKind: string }>,
+): string {
+  const fileList = files
+    .map((f) => `File: ${f.filename} (declared: ${f.declaredKind})`)
+    .join("\n");
+  return `${fileList ? `${fileList}\n` : ""}Milestone ${milestone.id} "${milestone.name}". Release condition (${milestone.clause.clause_id}): "${milestone.clause.quote}". Does the evidence show this condition is met? Be skeptical: stock photos, a different room, unfinished work, or a report for a different address are "insufficient". If you can't tell, answer "unclear".`;
+}
+
 export function looksLikePolicyText(t: string): boolean {
   if (t.includes("TR-2611") || /TRAVEL\s*&\s*EXPENSE\s*POLICY/i.test(t)) return true;
   if (/TRIP\s+REQUEST/i.test(t) && /Traveler:/i.test(t)) return true;

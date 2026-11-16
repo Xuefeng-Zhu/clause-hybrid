@@ -7,8 +7,10 @@ import { SAMPLE_EXCEPTION_NOTE, SAMPLE_POLICY_TERMS } from "../server/clause/fix
 import { ContractCardService } from "../server/clause/milestones/service.js";
 import { MemoryJobStore } from "../server/clause/store/jobStore.js";
 import {
+  checkMissingEvidenceKinds,
   computeValidatedExceptionCap,
   validateChangeOrderDraft,
+  validateEvidenceVerdict,
   validateExceptionExtraction,
   validateExpenseTerms,
 } from "../shared/clause-ai/validate.js";
@@ -91,6 +93,11 @@ const { NEEDS_CONNECTION_MESSAGE } = await import("../app/lib/hybrid-ai.js");
 const { parseExpenseInBrowser } = await import("../app/lib/clause-ai/expense.js");
 const { explainExceptionInBrowser } = await import("../app/lib/clause-ai/exception.js");
 const { draftChangeOrderInBrowser } = await import("../app/lib/clause-ai/changeOrder.js");
+const {
+  chooseEvidenceMode,
+  computeScaledDimensions,
+  evaluateEvidenceInBrowser,
+} = await import("../app/lib/clause-ai/evidence.js");
 const { parseDocumentInBrowser } = await import("../app/lib/clause-ai/parse.js");
 
 const quoteSample = readFileSync(
@@ -656,5 +663,136 @@ describe("validateChangeOrderDraft & draftChangeOrderInBrowser", () => {
     const offline = await draftChangeOrderInBrowser(quoteTerms, coEmailSample, { serverFallback });
     expect(offline.status).toBe("needs-connection");
     expect(serverFallback).not.toHaveBeenCalled();
+  });
+});
+
+describe("evidence downscaling, validator, and evaluateEvidenceInBrowser", () => {
+  const m2 = quoteTerms.milestones[1]!; // M2 requires photos
+  const m3 = quoteTerms.milestones[2]!; // M3 requires inspection_report + walkthrough_signoff
+  const validBase64 = Buffer.alloc(128, 7).toString("base64");
+
+  it("caps resized dimensions at 768px while preserving aspect ratio and validates verdicts", () => {
+    expect(computeScaledDimensions(1600, 1200)).toEqual({ width: 768, height: 576 });
+    expect(computeScaledDimensions(600, 1200)).toEqual({ width: 384, height: 768 });
+    expect(computeScaledDimensions(640, 480)).toEqual({ width: 640, height: 480 });
+
+    const missing = checkMissingEvidenceKinds(m3, [
+      { declaredKind: "photos" },
+    ]);
+    expect(missing?.verdict).toBe("insufficient");
+    expect(missing?.missing).toEqual(["inspection_report", "walkthrough_signoff"]);
+
+    expect(
+      validateEvidenceVerdict({
+        verdict: "meets",
+        reasoning: "Installed maple cabinets match contract scope.",
+        observed: ["Base and upper cabinets installed"],
+        missing: [],
+      }).ok,
+    ).toBe(true);
+
+    // Contradictory "meets" verdict with missing items must be rejected
+    expect(
+      validateEvidenceVerdict({
+        verdict: "meets",
+        reasoning: "Mostly done",
+        observed: ["Cabinets"],
+        missing: ["walkthrough_signoff"],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("evaluates single-turn downscaled JPEG in browser with PREFER_IN_CLOUD default and falls back on PDF/missing kinds/failure", async () => {
+    expect(chooseEvidenceMode()).toBe("prefer_in_cloud");
+    const downscale = vi.fn(async () => ({
+      mimeType: "image/jpeg" as const,
+      base64: "DOWNSCALED_JPEG_DATA",
+      width: 768,
+      height: 576,
+    }));
+    const serverFallback = vi.fn(async () => ({ server: true }));
+
+    mockReply(
+      JSON.stringify({
+        verdict: "meets",
+        reasoning: "Photo shows completed cabinet framing and counters for M2.",
+        observed: ["Upper and lower maple cabinetry installed"],
+        missing: [],
+      }),
+      "in_cloud",
+    );
+
+    const photoFile = {
+      filename: "cabinets-installed.png",
+      mediaType: "image/png" as const,
+      base64: validBase64,
+      declaredKind: "photos" as const,
+    };
+
+    const res = await evaluateEvidenceInBrowser(m2, [photoFile], {
+      downscale,
+      serverFallback,
+    });
+
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") return;
+    expect(res.verdict.verdict).toBe("meets");
+    expect(res.image).toEqual({
+      mimeType: "image/jpeg",
+      base64: "DOWNSCALED_JPEG_DATA",
+      width: 768,
+      height: 576,
+    });
+    expect(res.ai).toMatchObject({ source: "in_cloud", model: "gemini-3.5-flash-lite" });
+    expect(downscale).toHaveBeenCalledTimes(1);
+    expect(serverFallback).not.toHaveBeenCalled();
+
+    const params = getGenerativeModel.mock.calls.at(-1)![1] as Record<string, any>;
+    expect(params.mode).toBe("prefer_in_cloud");
+    expect(params.inCloudParams.model).toBe("gemini-3.5-flash-lite");
+
+    // Verify single-turn multimodal call received ONE JPEG InlineDataPart
+    const callArg = generateContent.mock.calls.at(-1)![0] as Array<Record<string, any>>;
+    expect(Array.isArray(callArg)).toBe(true);
+    expect(callArg).toHaveLength(2);
+    expect(callArg[1]).toEqual({
+      type: "inlineData",
+      inlineData: { mimeType: "image/jpeg", data: "DOWNSCALED_JPEG_DATA" },
+    });
+
+    // Telemetry never stores image bytes or filenames
+    await vi.waitFor(() => expect(addDoc).toHaveBeenCalledTimes(1));
+    const logged = JSON.stringify(addDoc.mock.calls[0]![1]);
+    expect(logged).toContain('"step":"evidence"');
+    expect(logged).not.toContain("DOWNSCALED_JPEG_DATA");
+    expect(logged).not.toContain("cabinets-installed");
+
+    // Server submitProof keeps missing-kinds deterministic guard and attaches aiSource
+    const svc = new ContractCardService(new MockIssuingGateway(), new MemoryJobStore(), "owner@example.com");
+    let job = await svc.createJob({ kind: "text", text: quoteSample });
+    job = await svc.approveTerms(job.id);
+    job = await svc.submitProof(job.id, [photoFile], {
+      verdict: res.verdict,
+      aiSource: res.ai,
+    });
+    expect(job.pending?.kind).toBe("release_milestone");
+    expect(job.pending?.aiSource).toEqual(res.ai);
+
+    // PDF proof routes cleanly to serverFallback without calling hybrid AI
+    const prevCalls = generateContent.mock.calls.length;
+    const pdfRes = await evaluateEvidenceInBrowser(
+      m2,
+      [{ filename: "report.pdf", mediaType: "application/pdf", base64: validBase64, declaredKind: "photos" }],
+      { downscale, serverFallback },
+    );
+    expect(pdfRes.status).toBe("fallback");
+    expect(generateContent.mock.calls.length).toBe(prevCalls);
+    expect(serverFallback).toHaveBeenCalledTimes(1);
+
+    // Offline without on-device returns needs-connection and never sends image or hits server
+    stubBrowserEnv({ online: false, lmAvailability: "unavailable" });
+    const offline = await evaluateEvidenceInBrowser(m2, [photoFile], { downscale, serverFallback });
+    expect(offline.status).toBe("needs-connection");
+    expect(serverFallback).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,8 +1,15 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { config } from "../config.js";
+import { EVIDENCE_TOOL_SYSTEM, evidencePrompt } from "../../../shared/clause-ai/prompts.js";
+import {
+  checkMissingEvidenceKinds,
+  EvidenceVerdict,
+  validateEvidenceVerdict,
+} from "../../../shared/clause-ai/validate.js";
 import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
 import type { EvidenceKind, Milestone } from "../contract/schema.js";
+
+export { EvidenceVerdict };
 
 export interface EvidenceFile {
   filename: string;
@@ -11,30 +18,16 @@ export interface EvidenceFile {
   declaredKind: EvidenceKind; // what the uploader says it is
 }
 
-export const EvidenceVerdict = z.object({
-  verdict: z.enum(["meets", "insufficient", "unclear"]),
-  reasoning: z.string(), // shown to the owner next to the approve button
-  observed: z.array(z.string()), // concrete things seen in the evidence
-  missing: z.array(z.string()),
-});
-export type EvidenceVerdict = z.infer<typeof EvidenceVerdict>;
-
 /**
  * Two layers:
  *  1. Code: are all required evidence KINDS present? If not, stop here; no model call.
- *  2. Claude: does the content actually show the release condition? (photos/PDF)
+ *  2. Vision model: does the content actually show the release condition? (photos/PDF)
  * Either way the result is only a recommendation; the owner approves the release.
  */
 export async function evaluateEvidence(milestone: Milestone, files: EvidenceFile[]): Promise<EvidenceVerdict> {
-  const have = new Set(files.map((f) => f.declaredKind));
-  const missingKinds = milestone.evidence_required.filter((k) => !have.has(k));
-  if (missingKinds.length) {
-    return {
-      verdict: "insufficient",
-      reasoning: `${milestone.clause.clause_id} requires ${milestone.evidence_required.join(" + ")}; missing ${missingKinds.join(", ")}.`,
-      observed: [],
-      missing: missingKinds,
-    };
+  const missingKindsVerdict = checkMissingEvidenceKinds(milestone, files);
+  if (missingKindsVerdict) {
+    return missingKindsVerdict;
   }
   if (!llmProvider()) return offlineVerdict(milestone, files);
   // Live vision only: a placeholder/empty file would 400 at the model API, so stop in code.
@@ -57,18 +50,22 @@ export async function evaluateEvidence(milestone: Milestone, files: EvidenceFile
   });
   blocks.push({
     type: "text",
-    text: `Milestone ${milestone.id} "${milestone.name}". Release condition (${milestone.clause.clause_id}): "${milestone.clause.quote}". Does the evidence show this condition is met? Be skeptical: stock photos, a different room, unfinished work, or a report for a different address are "insufficient". If you can't tell, answer "unclear".`,
+    text: evidencePrompt(milestone, files),
   });
 
   const { value: callInput } = await withOfflineFallback(() => callTool({
-    system: "You review construction progress evidence for a small-business owner. You recommend; the owner decides.",
+    system: EVIDENCE_TOOL_SYSTEM,
     content: blocks,
     toolName: "record_verdict",
     description: "Record the evidence verdict.",
     schema: z.toJSONSchema(EvidenceVerdict, { target: "draft-7" }) as Record<string, unknown>,
     maxTokens: 1200,
   }), () => offlineVerdict(milestone, files));
-  return EvidenceVerdict.parse(callInput);
+  const validated = validateEvidenceVerdict(callInput);
+  if (!validated.ok || !validated.verdict) {
+    throw new Error(`Invalid evidence verdict: ${validated.errors.join(" ")}`);
+  }
+  return validated.verdict;
 }
 
 /** Offline demo: filenames containing "stock" or "wrong" fail; everything else passes. */

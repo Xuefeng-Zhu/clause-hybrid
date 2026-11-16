@@ -5,7 +5,12 @@
 import { z } from "zod";
 import type { ClauseRef, ContractTerms } from "../../server/clause/contract/schema.js";
 import { addDaysIso, PolicyTerms, validatePolicyTerms } from "../../server/clause/expense/schema.js";
-import { missingQuotes, policyClauses, type PromptContractContext } from "./prompts.js";
+import {
+  missingQuotes,
+  policyClauses,
+  type PromptContractContext,
+  type PromptMilestoneContext,
+} from "./prompts.js";
 
 /**
  * Drop null values (recursively) so optional fields the model marked "not present"
@@ -480,6 +485,70 @@ export function validateChangeOrderDraft(
       oldTotal,
       newTotal,
       totalDelta,
+    },
+    errors: [],
+  };
+}
+
+export const EvidenceVerdict = z.object({
+  verdict: z.enum(["meets", "insufficient", "unclear"]),
+  reasoning: z.string(),
+  observed: z.array(z.string()),
+  missing: z.array(z.string()),
+});
+export type EvidenceVerdict = z.infer<typeof EvidenceVerdict>;
+
+export interface EvidenceValidationResult {
+  ok: boolean;
+  verdict?: EvidenceVerdict;
+  errors: string[];
+}
+
+/** Deterministic pre-check: reject missing declared evidence kinds in code before any model call. */
+export function checkMissingEvidenceKinds(
+  milestone: Pick<PromptMilestoneContext, "evidence_required" | "clause">,
+  files: Array<{ declaredKind: string }>,
+): EvidenceVerdict | null {
+  const have = new Set(files.map((f) => f.declaredKind));
+  const missingKinds = milestone.evidence_required.filter((k) => !have.has(k));
+  if (missingKinds.length === 0) return null;
+  return {
+    verdict: "insufficient",
+    reasoning: `${milestone.clause.clause_id} requires ${milestone.evidence_required.join(" + ")}; missing ${missingKinds.join(", ")}.`,
+    observed: [],
+    missing: missingKinds,
+  };
+}
+
+/** Deterministic validation of an AI evidence verdict (shape, non-empty reasoning, consistent missing list). */
+export function validateEvidenceVerdict(raw: unknown): EvidenceValidationResult {
+  const parsed = EvidenceVerdict.safeParse(stripNulls(raw));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: parsed.error.issues.map((i) => `${i.path.join(".") || "root"}: ${i.message}`),
+    };
+  }
+  const cleanReasoning = parsed.data.reasoning.trim();
+  const observed = parsed.data.observed.map((s) => s.trim()).filter(Boolean);
+  const missing = parsed.data.missing.map((s) => s.trim()).filter(Boolean);
+  const errors: string[] = [];
+
+  if (!cleanReasoning) errors.push("Evidence verdict reasoning is required.");
+  if (parsed.data.verdict === "meets" && missing.length > 0) {
+    errors.push('Evidence verdict "meets" cannot report non-empty missing items.');
+  }
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    verdict: {
+      verdict: parsed.data.verdict,
+      reasoning: cleanReasoning,
+      observed,
+      missing,
     },
     errors: [],
   };

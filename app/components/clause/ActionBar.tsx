@@ -61,6 +61,7 @@ interface ActionBarProps {
   onRemoveStagedFile: (idx: number) => void;
   onSubmitProof: () => void;
   onApproveRelease: () => void;
+  proofOfflineNotice?: string | null | undefined;
 
   // Change order sheet state & handlers
   coSheetOpen: boolean;
@@ -94,6 +95,7 @@ export function ActionBar({
   onRemoveStagedFile,
   onSubmitProof,
   onApproveRelease,
+  proofOfflineNotice,
   coSheetOpen,
   onCoSheetOpenChange,
   coEmailText,
@@ -311,6 +313,9 @@ export function ActionBar({
                       ? "Doesn't meet"
                       : "Meets requirements"}
                   </span>
+                  {pendingRelease.aiSource ? (
+                    <AiSourceBadge info={pendingRelease.aiSource} />
+                  ) : null}
                   <span className="truncate text-stone-600">
                     {cleanVerdictReasoning(pendingRelease.verdict?.reasoning)}
                   </span>
@@ -597,6 +602,15 @@ export function ActionBar({
                   Add another file
                 </Button>
               </div>
+              {proofOfflineNotice ? (
+                <div
+                  role="alert"
+                  data-testid="proof-offline-needs-connection"
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900"
+                >
+                  {proofOfflineNotice}
+                </div>
+              ) : null}
             </div>
 
             {/* Verdict Card */}
@@ -634,6 +648,11 @@ export function ActionBar({
                     +{formatCurrency(pendingRelease.amount ?? 0, pendingRelease.currency)}
                   </span>
                 </div>
+                {pendingRelease.aiSource ? (
+                  <div className="mt-2">
+                    <AiSourceBadge info={pendingRelease.aiSource} />
+                  </div>
+                ) : null}
 
                 <p className="mt-2 leading-relaxed text-stone-700">
                   {cleanVerdictReasoning(pendingRelease.verdict.reasoning)}

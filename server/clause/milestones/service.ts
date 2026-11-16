@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { validateChangeOrderDraft } from "../../../shared/clause-ai/validate.js";
+import {
+  checkMissingEvidenceKinds,
+  validateChangeOrderDraft,
+  validateEvidenceVerdict,
+} from "../../../shared/clause-ai/validate.js";
 import type { IssuingGateway } from "../airwallex/types.js";
 import { config } from "../config.js";
 import { applyChangeOrder, draftChangeOrder } from "../contract/changeOrder.js";
@@ -386,11 +390,36 @@ export class ContractCardService {
     return await this.store.save(job);
   }
 
-  async submitProof(jobId: string, files: EvidenceFile[]): Promise<Job> {
+  async submitProof(
+    jobId: string,
+    files: EvidenceFile[],
+    browserEval?: {
+      verdict: unknown;
+      aiSource: { source: "on_device" | "in_cloud"; model: string; ms: number };
+    },
+  ): Promise<Job> {
     const job = await this.activeJob(jobId);
     const milestone = nextMilestone(job.terms, job.releasedMilestoneIds);
     if (!milestone) throw new Error("All milestones already released.");
-    const verdict = await evaluateEvidence(milestone, files);
+
+    const missingKindsVerdict = checkMissingEvidenceKinds(milestone, files);
+    let verdict;
+    let usedBrowserAi = false;
+
+    if (missingKindsVerdict) {
+      // Deterministic code guard ALWAYS overrides even if browser supplied a verdict.
+      verdict = missingKindsVerdict;
+    } else if (browserEval) {
+      const validated = validateEvidenceVerdict(browserEval.verdict);
+      if (!validated.ok || !validated.verdict) {
+        throw new Error(`Invalid evidence verdict: ${validated.errors.join(" ")}`);
+      }
+      verdict = validated.verdict;
+      usedBrowserAi = true;
+    } else {
+      verdict = await evaluateEvidence(milestone, files);
+    }
+
     job.pending = {
       approval_id: `appr_${randomUUID().slice(0, 8)}`,
       kind: "release_milestone",
@@ -399,9 +428,19 @@ export class ContractCardService {
       currency: job.terms.currency,
       evidence_sha256: hashFiles(files),
       verdict,
+      ...(usedBrowserAi && browserEval?.aiSource ? { aiSource: browserEval.aiSource } : {}),
       created_at: new Date().toISOString(),
     };
-    log(job, "proof_submitted", `Proof for ${milestone.id}: agent says "${verdict.verdict}". ${verdict.reasoning}`, verdict);
+    const suffix =
+      usedBrowserAi && browserEval?.aiSource
+        ? ` (${browserEval.aiSource.model}, ${browserEval.aiSource.source === "on_device" ? "on-device" : "cloud"})`
+        : "";
+    log(
+      job,
+      "proof_submitted",
+      `Proof for ${milestone.id}: agent says "${verdict.verdict}"${suffix}. ${verdict.reasoning}`,
+      verdict,
+    );
     return await this.store.save(job);
   }
 

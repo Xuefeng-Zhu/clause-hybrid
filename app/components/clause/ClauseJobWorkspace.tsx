@@ -53,6 +53,7 @@ import { EmptyJobState, NewJobDialog } from "./NewJobDialog";
 import { AiSourceBadge } from "./AiSourceBadge";
 import { looksLikePolicyText } from "../../../shared/clause-ai/prompts.js";
 import { draftChangeOrderInBrowser } from "@/lib/clause-ai/changeOrder";
+import { chooseEvidenceMode, evaluateEvidenceInBrowser } from "@/lib/clause-ai/evidence";
 import { explainExceptionInBrowser } from "@/lib/clause-ai/exception";
 import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
@@ -61,6 +62,7 @@ import {
   formatAiSource,
   isNavigatorOffline,
   NEEDS_CONNECTION_MESSAGE,
+  needsConnectionOffline,
 } from "@/lib/hybrid-ai";
 import { SandboxToolsDrawer } from "./SandboxToolsDrawer";
 import { MetalMandatePanel, type MandateStateLite } from "./MetalMandatePanel";
@@ -241,6 +243,7 @@ export function ClauseJobWorkspace() {
   const [parseOfflineNotice, setParseOfflineNotice] = useState<string | null>(null);
   const [exceptionOfflineNotice, setExceptionOfflineNotice] = useState<string | null>(null);
   const [coOfflineNotice, setCoOfflineNotice] = useState<string | null>(null);
+  const [proofOfflineNotice, setProofOfflineNotice] = useState<string | null>(null);
   const activeClauseId = hoveredClauseId ?? pinnedClauseId;
 
   useEffect(() => {
@@ -249,6 +252,7 @@ export function ClauseJobWorkspace() {
       setParseOfflineNotice(null);
       setExceptionOfflineNotice(null);
       setCoOfflineNotice(null);
+      setProofOfflineNotice(null);
     };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
@@ -561,19 +565,65 @@ export function ClauseJobWorkspace() {
 
   async function handleSubmitProof() {
     if (!activeJobId) return;
+    setProofOfflineNotice(null);
     await runExclusive(
       "Evaluating milestone proof…",
       async () => {
         const fromInput = await collectInputFiles();
         const combined = [...stagedProofFiles, ...fromInput];
+        if (combined.length === 0 && isNavigatorOffline() && (await needsConnectionOffline(chooseEvidenceMode()))) {
+          setProofOfflineNotice(NEEDS_CONNECTION_MESSAGE);
+          toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
         const filesToSend: UploadableProofFile[] =
           combined.length > 0 ? combined : [await loadSampleProof(proofKind)];
+
+        const nextMs = job?.terms.milestones.find(
+          (m) => !job.releasedMilestoneIds.includes(m.id),
+        );
+        if (nextMs) {
+          const evaluated = await evaluateEvidenceInBrowser(nextMs, filesToSend, {
+            serverFallback: () =>
+              submitProofMut.mutateAsync({
+                jobId: activeJobId,
+                files: filesToSend,
+              }),
+          });
+          if (evaluated.status === "needs-connection") {
+            setProofOfflineNotice(evaluated.message);
+            toast.error(evaluated.message);
+            return null;
+          }
+          if (evaluated.status === "fallback") {
+            if (isFirebaseConfigured() && evaluated.reason !== "missing-evidence-kinds") {
+              toast.message("Browser proof check unavailable; evaluating on the server.");
+            }
+            return evaluated.fallback;
+          }
+          toast.message(formatAiSource(evaluated.ai));
+          return submitProofMut.mutateAsync({
+            jobId: activeJobId,
+            files: filesToSend,
+            verdict: evaluated.verdict,
+            aiSource: evaluated.ai,
+          });
+        }
+
+        if (isNavigatorOffline()) {
+          setProofOfflineNotice(NEEDS_CONNECTION_MESSAGE);
+          toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
+
         return submitProofMut.mutateAsync({
           jobId: activeJobId,
           files: filesToSend,
         });
       },
       (res) => {
+        if (!res) return;
+        setProofOfflineNotice(null);
         setStagedProofFiles([]);
         if (proofInputRef.current) proofInputRef.current.value = "";
         const verdict = res.pending?.verdict?.verdict;
@@ -862,6 +912,10 @@ export function ClauseJobWorkspace() {
         setSandboxOpen(false);
         setProofSheetOpen(false);
         setCoSheetOpen(false);
+        setParseOfflineNotice(null);
+        setExceptionOfflineNotice(null);
+        setCoOfflineNotice(null);
+        setProofOfflineNotice(null);
         setExpenseReportOpen(false);
         setActivityOpen(false);
         setSearchParams(new URLSearchParams(), { replace: true });
@@ -1276,6 +1330,7 @@ export function ClauseJobWorkspace() {
             }
             onSubmitProof={() => void handleSubmitProof()}
             onApproveRelease={() => void handleApproveRelease()}
+            proofOfflineNotice={proofOfflineNotice}
             coSheetOpen={coSheetOpen}
             onCoSheetOpenChange={setCoSheetOpen}
             coEmailText={coEmailText}
