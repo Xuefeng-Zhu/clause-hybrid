@@ -18,15 +18,24 @@ Rules:
 - If anything is ambiguous (missing deadline, milestones that don't sum to the total, conflicting dates), record it in open_questions.
 Return only JSON that matches the provided schema.`;
 
-export const POLICY_SYSTEM = `You extract corporate travel & expense policy rules and an approved trip request into structured PolicyTerms.
+const POLICY_SYSTEM_RULES = `You extract corporate travel & expense policy rules and an approved trip request into structured PolicyTerms.
 Rules:
 - Copy each clause_id exactly as written (e.g. "§2.1", "§3.3", "§4.2") and quote the clause text verbatim. Never paraphrase a quote.
 - Amounts in major units as numbers (2,000.00 -> 2000).
 - Dates as YYYY-MM-DD. Compute card_expires.date deterministically from trip_end + the policy's expiry window (e.g. 48 hours after Nov 21, 2026 -> 2026-11-23).
 - allowed_spend.categories: choose only from ["lodging", "airfare", "ground_transport", "meals"].
 - Record every prohibited spend clause (§4.1, §4.2, etc.) separately in prohibited_spend with its verbatim quote.
-- If anything is ambiguous, add it to open_questions.
+- If anything is ambiguous, add it to open_questions.`;
+
+export const POLICY_SYSTEM = `${POLICY_SYSTEM_RULES}
 Return only JSON that matches the provided schema.`;
+
+export const POLICY_TOOL_SYSTEM = `${POLICY_SYSTEM_RULES}
+Return the result only through the record_policy_terms tool.`;
+
+export function policyPrompt(documentText: string): string {
+  return `Extract the travel & expense policy rules and approved trip terms:\n\n<document>\n${documentText}\n</document>`;
+}
 
 export function looksLikePolicyText(t: string): boolean {
   if (t.includes("TR-2611") || /TRAVEL\s*&\s*EXPENSE\s*POLICY/i.test(t)) return true;

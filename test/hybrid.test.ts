@@ -20,6 +20,7 @@ vi.mock("firebase/ai", () => ({
   },
 }));
 vi.mock("../app/lib/firebase", () => ({
+  isFirebaseConfigured: () => true,
   getFirebaseAI: () => ({}),
   getDefaultCloudModel: () => "gemini-3.5-flash-lite",
   getRemoteConfigString: (_k: string, fallback: string) => fallback,

@@ -51,6 +51,8 @@ import { ExpenseReportSheet } from "./ExpenseReportSheet";
 import { MilestoneBar } from "./MilestoneBar";
 import { EmptyJobState, NewJobDialog } from "./NewJobDialog";
 import { AiSourceBadge } from "./AiSourceBadge";
+import { looksLikePolicyText } from "../../../shared/clause-ai/prompts.js";
+import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { formatAiSource } from "@/lib/hybrid-ai";
@@ -338,6 +340,27 @@ export function ClauseJobWorkspace() {
       async () => {
         // Clause Private: read the document in the browser (Gemini Nano on-device, cloud Gemini
         // fallback via Firebase AI Logic) and send only the structured terms to the server.
+        if (looksLikePolicyText(usedText)) {
+          const parsed = await parseExpenseInBrowser(usedText, {
+            serverFallback: () =>
+              parseQuoteMut.mutateAsync(
+                trimmed ? { text: trimmed } : { useSample: true, sampleKind: "policy" },
+              ),
+          });
+          if (parsed.status === "fallback") {
+            if (isFirebaseConfigured()) {
+              toast.message("On-device read unavailable; reading on the server.");
+            }
+            return parsed.fallback;
+          }
+          const res = await createFromTermsMut.mutateAsync({
+            kind: "policy",
+            policyTerms: parsed.policyTerms,
+            aiSource: parsed.ai,
+          });
+          toast.message(formatAiSource(parsed.ai));
+          return res;
+        }
         if (isFirebaseConfigured()) {
           try {
             const parsed = await parseDocumentInBrowser(usedText);
@@ -868,6 +891,10 @@ export function ClauseJobWorkspace() {
                     >
                       {statusPill.label}
                     </span>
+                  ) : null}
+
+                  {summary.aiSource && summary.status !== "draft" ? (
+                    <AiSourceBadge info={summary.aiSource} />
                   ) : null}
 
                   {runtime?.airwallexMode === "sandbox" ? (

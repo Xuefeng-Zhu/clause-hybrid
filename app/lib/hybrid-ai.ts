@@ -36,6 +36,26 @@ export interface HybridRequest<S extends z.ZodTypeAny> {
 
 export const ON_DEVICE_MODEL_LABEL = "Gemini Nano";
 
+/** Error thrown when model inference completed but JSON extraction or Zod schema parsing failed. */
+export class HybridSchemaError extends Error {
+  readonly source: AiSource;
+  readonly model: string;
+  readonly ms: number;
+  readonly causeError?: unknown;
+
+  constructor(
+    message: string,
+    meta: { source: AiSource; model: string; ms: number; cause?: unknown },
+  ) {
+    super(message);
+    this.name = "HybridSchemaError";
+    this.source = meta.source;
+    this.model = meta.model;
+    this.ms = meta.ms;
+    this.causeError = meta.cause;
+  }
+}
+
 const MODE_MAP: Record<HybridMode, (typeof InferenceMode)[keyof typeof InferenceMode]> = {
   prefer_on_device: InferenceMode.PREFER_ON_DEVICE,
   only_on_device: InferenceMode.ONLY_ON_DEVICE,
@@ -116,8 +136,16 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
         ? "on_device"
         : "in_cloud";
 
-  const value = req.schema.parse(stripNulls(extractJson(response.text())));
-  return { value, source, model: source === "on_device" ? ON_DEVICE_MODEL_LABEL : cloudModel, ms };
+  const modelLabel = source === "on_device" ? ON_DEVICE_MODEL_LABEL : cloudModel;
+  try {
+    const value = req.schema.parse(stripNulls(extractJson(response.text())));
+    return { value, source, model: modelLabel, ms };
+  } catch (err) {
+    throw new HybridSchemaError(
+      err instanceof Error ? err.message : "Model output did not match schema.",
+      { source, model: modelLabel, ms, cause: err },
+    );
+  }
 }
 
 export type OnDeviceAvailability = "available" | "downloadable" | "downloading" | "unavailable" | "unsupported";

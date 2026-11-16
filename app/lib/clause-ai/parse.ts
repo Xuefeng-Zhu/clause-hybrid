@@ -4,18 +4,17 @@
  * Only the structured, validated terms are sent to the Clause server.
  */
 import { ContractTerms, validateTerms } from "../../../server/clause/contract/schema.js";
-import { addDaysIso, PolicyTerms, validatePolicyTerms } from "../../../server/clause/expense/schema.js";
+import type { PolicyTerms } from "../../../server/clause/expense/schema.js";
 import {
   CONTRACT_SYSTEM,
   contractClauses,
   looksLikePolicyText,
   missingQuotes,
-  POLICY_SYSTEM,
-  policyClauses,
 } from "../../../shared/clause-ai/prompts.js";
 import { renumberDuplicateMilestoneIds } from "../../../shared/clause-ai/validate.js";
 import { getRemoteConfigThreshold } from "../firebase";
 import { hybridGenerate, type HybridMode, type HybridResult } from "../hybrid-ai";
+import { parseExpenseInBrowser } from "./expense";
 
 export { renumberDuplicateMilestoneIds };
 
@@ -31,18 +30,16 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
   const mode = opts.mode ?? chooseMode(text);
 
   if (looksLikePolicyText(text)) {
-    const r = await hybridGenerate({
-      system: POLICY_SYSTEM,
-      prompt: `Extract the travel & expense policy rules and approved trip terms:\n\n<document>\n${text}\n</document>`,
-      schema: PolicyTerms,
-      mode,
-    });
-    const policyTerms = r.value;
-    if (/48\s+hours\s+after/i.test(policyTerms.card_expires.clause.quote) && /^\d{4}-\d{2}-\d{2}$/.test(policyTerms.trip_end)) {
-      policyTerms.card_expires.date = addDaysIso(policyTerms.trip_end, 2);
+    const res = await parseExpenseInBrowser(text, { mode });
+    if (res.status !== "ok") {
+      throw new Error(res.reason);
     }
-    policyTerms.open_questions.push(...missingQuotes(policyClauses(policyTerms), text));
-    return { kind: "policy", policyTerms, problems: validatePolicyTerms(policyTerms), ai: strip(r) };
+    return {
+      kind: "policy",
+      policyTerms: res.policyTerms,
+      problems: res.problems,
+      ai: res.ai,
+    };
   }
 
   const r = await hybridGenerate({
