@@ -8,11 +8,11 @@ buildscript {
     // Keep aligned with apps/mobile/app.json -> expo-build-properties -> android.kotlinVersion
     clauseKotlinVersion = rootProject.ext.has("kotlinVersion")
       ? rootProject.ext.get("kotlinVersion")
-      : "2.1.20"
-    // KSP plugin version must match clauseKotlinVersion (2.1.20-2.0.1 targets Kotlin 2.1.20)
+      : "2.4.21"
+    // KSP2 (2.3.x) is decoupled from the Kotlin version; firebase-ai-ondevice beta08 needs Kotlin >= 2.4 metadata
     clauseKspPluginVersion = rootProject.ext.has("kspVersion")
       ? rootProject.ext.get("kspVersion")
-      : "2.1.20-2.0.1"
+      : "2.3.14"
   }
   repositories {
     google()
@@ -29,8 +29,8 @@ def firebaseAiVersion = "18.2.0"
 def firebaseAiOndeviceVersion = "16.0.0-beta08"
 def firebaseAppCheckDebugVersion = "20.1.0"
 def firebaseAiKspProcessorVersion = "17.0.0"
-// kotlinx-serialization-json 1.8.1 matches Kotlin 2.1.x
-def kotlinxSerializationJsonVersion = "1.8.1"
+// kotlinx-serialization-json 1.13.0 for Kotlin 2.4.x
+def kotlinxSerializationJsonVersion = "1.13.0"
 
 apply plugin: "com.android.library"
 apply plugin: "org.jetbrains.kotlin.android"
