@@ -6,6 +6,8 @@ import {
   initializeAppCheck,
   ReCaptchaEnterpriseProvider,
 } from "firebase/app-check";
+import { type Auth, getAuth } from "firebase/auth";
+import { type Firestore, getFirestore } from "firebase/firestore";
 import {
   fetchAndActivate,
   getNumber,
@@ -89,6 +91,8 @@ export function isFirebaseConfigured(): boolean {
 }
 
 let cachedServices: FirebaseClientServices | null = null;
+let cachedAuth: Auth | null = null;
+let cachedDb: Firestore | null = null;
 
 export function getFirebaseServices(): FirebaseClientServices {
   if (typeof window === "undefined") {
@@ -170,6 +174,28 @@ export function getFirebaseAI(): AI {
   return getFirebaseServices().ai;
 }
 
+export function getFirebaseAuth(): Auth | null {
+  if (!isFirebaseConfigured()) return null;
+  if (cachedAuth) return cachedAuth;
+  try {
+    cachedAuth = getAuth(getFirebaseServices().app);
+    return cachedAuth;
+  } catch {
+    return null;
+  }
+}
+
+export function getFirebaseDb(): Firestore | null {
+  if (!isFirebaseConfigured()) return null;
+  if (cachedDb) return cachedDb;
+  try {
+    cachedDb = getFirestore(getFirebaseServices().app);
+    return cachedDb;
+  } catch {
+    return null;
+  }
+}
+
 export function getRemoteConfigThreshold(
   key = "parse_cloud_char_threshold",
   fallback = DEFAULT_CLOUD_CHAR_THRESHOLD,
@@ -219,4 +245,6 @@ export function getRemoteConfigStepMode(
 /** Reset cached client singletons (for unit tests). */
 export function resetFirebaseServicesForTest(): void {
   cachedServices = null;
+  cachedAuth = null;
+  cachedDb = null;
 }

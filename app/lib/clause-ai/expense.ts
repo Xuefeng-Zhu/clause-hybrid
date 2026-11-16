@@ -9,6 +9,7 @@ import type { AI } from "firebase/ai";
 import { PolicyTerms } from "../../../server/clause/expense/schema.js";
 import { POLICY_SYSTEM, policyPrompt } from "../../../shared/clause-ai/prompts.js";
 import { validateExpenseTerms } from "../../../shared/clause-ai/validate.js";
+import { logAiCall } from "../ai-log";
 import {
   getRemoteConfigStepMode,
   getRemoteConfigThreshold,
@@ -84,6 +85,13 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
     });
 
     const validation = validateExpenseTerms(r.value, text);
+    void logAiCall({
+      step: "expense",
+      mode,
+      inferenceSource: r.source,
+      latencyMs: r.ms,
+      validatorOk: validation.ok,
+    });
     if (!validation.ok || !validation.policyTerms) {
       return runFallback(`expense-validation-failed: ${validation.errors.join("; ")}`);
     }
@@ -97,6 +105,13 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
     };
   } catch (err) {
     if (err instanceof HybridSchemaError) {
+      void logAiCall({
+        step: "expense",
+        mode,
+        inferenceSource: err.source,
+        latencyMs: err.ms,
+        validatorOk: false,
+      });
       return runFallback(`expense-schema-failed: ${err.message}`);
     }
     const msg = err instanceof Error ? err.message : "unknown error";

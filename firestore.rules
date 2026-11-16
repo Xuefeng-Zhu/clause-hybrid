@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users/{uid}/aiCalls
+// Document ID: auto-generated ({callId})
+// Purpose: Telemetry metadata for Firebase AI Logic hybrid inference calls.
+// Privacy boundary: Contract text, expense text, notes, and images are NEVER stored.
+// Fields (required, immutable / create-only):
+//   - step: string ('contract' | 'expense' | 'exception' | 'changeOrder' | 'evidence')
+//   - mode: string ('prefer_on_device' | 'only_on_device' | 'prefer_in_cloud' | 'only_in_cloud')
+//   - inferenceSource: string ('on_device' | 'in_cloud')
+//   - latencyMs: number (>= 0, <= 86400000)
+//   - validatorOk: bool
+//   - createdAt: timestamp (must equal request.time via serverTimestamp())
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isBoundedString(data, field, minLen, maxLen) {
+      return data[field] is string &&
+             data[field].size() >= minLen &&
+             data[field].size() <= maxLen;
+    }
+
+    // ===============================================================
+    // Domain Validator
+    // ===============================================================
+    function isValidAiCall(data) {
+      let allowedFields = [
+        'step',
+        'mode',
+        'inferenceSource',
+        'latencyMs',
+        'validatorOk',
+        'createdAt'
+      ];
+      let validSteps = ['contract', 'expense', 'exception', 'changeOrder', 'evidence'];
+      let validModes = ['prefer_on_device', 'only_on_device', 'prefer_in_cloud', 'only_in_cloud'];
+      let validSources = ['on_device', 'in_cloud'];
+
+      return data.keys().hasOnly(allowedFields) &&
+             data.keys().hasAll(allowedFields) &&
+             isBoundedString(data, 'step', 1, 32) &&
+             data.step in validSteps &&
+             isBoundedString(data, 'mode', 1, 32) &&
+             data.mode in validModes &&
+             isBoundedString(data, 'inferenceSource', 1, 32) &&
+             data.inferenceSource in validSources &&
+             data.latencyMs is number &&
+             data.latencyMs >= 0 &&
+             data.latencyMs <= 86400000 &&
+             data.validatorOk is bool &&
+             data.createdAt is timestamp &&
+             data.createdAt == request.time;
+    }
+
+    // Users can read and create only their own aiCalls metadata logs.
+    // Creates only: updates and deletes are explicitly forbidden.
+    match /users/{uid}/aiCalls/{callId} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidAiCall(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    // Default deny everything else (including /users/{uid} itself).
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

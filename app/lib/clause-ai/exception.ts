@@ -13,6 +13,7 @@ import {
   RawModelException,
   validateExceptionExtraction,
 } from "../../../shared/clause-ai/validate.js";
+import { logAiCall } from "../ai-log";
 import { getRemoteConfigStepMode, isFirebaseConfigured } from "../firebase";
 import {
   type AiSource,
@@ -95,6 +96,13 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
       ...(opts.requestedCharge !== undefined ? { requestedCharge: opts.requestedCharge } : {}),
       ...(opts.requestedCap !== undefined ? { requestedCap: opts.requestedCap } : {}),
     });
+    void logAiCall({
+      step: "exception",
+      mode,
+      inferenceSource: r.source,
+      latencyMs: r.ms,
+      validatorOk: validation.ok,
+    });
     if (!validation.ok || !validation.extraction || !validation.proposal) {
       return runFallback(`exception-validation-failed: ${validation.errors.join("; ")}`);
     }
@@ -108,6 +116,13 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
     };
   } catch (err) {
     if (err instanceof HybridSchemaError) {
+      void logAiCall({
+        step: "exception",
+        mode,
+        inferenceSource: err.source,
+        latencyMs: err.ms,
+        validatorOk: false,
+      });
       return runFallback(`exception-schema-failed: ${err.message}`);
     }
     const msg = err instanceof Error ? err.message : "unknown error";

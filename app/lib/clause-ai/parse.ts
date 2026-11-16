@@ -12,8 +12,9 @@ import {
   missingQuotes,
 } from "../../../shared/clause-ai/prompts.js";
 import { renumberDuplicateMilestoneIds } from "../../../shared/clause-ai/validate.js";
+import { logAiCall } from "../ai-log";
 import { getRemoteConfigStepMode, getRemoteConfigThreshold } from "../firebase";
-import { hybridGenerate, type HybridMode, type HybridResult } from "../hybrid-ai";
+import { hybridGenerate, HybridSchemaError, type HybridMode, type HybridResult } from "../hybrid-ai";
 import { parseExpenseInBrowser } from "./expense";
 
 export { renumberDuplicateMilestoneIds };
@@ -47,17 +48,39 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
 
   const mode = opts.mode ?? chooseMode(text);
 
-  const r = await hybridGenerate({
-    system: CONTRACT_SYSTEM,
-    prompt: `Extract the contract terms from this quote / thread:\n\n<document>\n${text}\n</document>`,
-    schema: ContractTerms,
-    step: "contract",
-    mode,
-  });
+  let r: HybridResult<ContractTerms>;
+  try {
+    r = await hybridGenerate({
+      system: CONTRACT_SYSTEM,
+      prompt: `Extract the contract terms from this quote / thread:\n\n<document>\n${text}\n</document>`,
+      schema: ContractTerms,
+      step: "contract",
+      mode,
+    });
+  } catch (err) {
+    if (err instanceof HybridSchemaError) {
+      void logAiCall({
+        step: "contract",
+        mode,
+        inferenceSource: err.source,
+        latencyMs: err.ms,
+        validatorOk: false,
+      });
+    }
+    throw err;
+  }
   const terms = r.value;
   renumberDuplicateMilestoneIds(terms);
   terms.open_questions.push(...missingQuotes(contractClauses(terms), text));
-  return { kind: "contract", terms, problems: validateTerms(terms), ai: strip(r) };
+  const problems = validateTerms(terms);
+  void logAiCall({
+    step: "contract",
+    mode,
+    inferenceSource: r.source,
+    latencyMs: r.ms,
+    validatorOk: problems.length === 0,
+  });
+  return { kind: "contract", terms, problems, ai: strip(r) };
 }
 
 function strip<T>(r: HybridResult<T>) {
