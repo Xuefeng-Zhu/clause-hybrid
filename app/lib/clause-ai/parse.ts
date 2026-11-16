@@ -13,15 +13,25 @@ import {
 } from "../../../shared/clause-ai/prompts.js";
 import { renumberDuplicateMilestoneIds } from "../../../shared/clause-ai/validate.js";
 import { logAiCall } from "../ai-log";
-import { getRemoteConfigStepMode, getRemoteConfigThreshold } from "../firebase";
-import { hybridGenerate, HybridSchemaError, type HybridMode, type HybridResult } from "../hybrid-ai";
+import { getRemoteConfigStepMode, getRemoteConfigThreshold, isFirebaseConfigured } from "../firebase";
+import {
+  hybridGenerate,
+  HybridSchemaError,
+  type HybridMode,
+  type HybridResult,
+  isNavigatorOffline,
+  needsConnectionOffline,
+  needsConnectionResult,
+  type NeedsConnectionResult,
+} from "../hybrid-ai";
 import { parseExpenseInBrowser } from "./expense";
 
 export { renumberDuplicateMilestoneIds };
 
 export type ClientParse =
-  | { kind: "contract"; terms: ContractTerms; problems: string[]; ai: Omit<HybridResult<unknown>, "value"> }
-  | { kind: "policy"; policyTerms: PolicyTerms; problems: string[]; ai: Omit<HybridResult<unknown>, "value"> };
+  | { status?: "ok"; kind: "contract"; terms: ContractTerms; problems: string[]; ai: Omit<HybridResult<unknown>, "value"> }
+  | { status?: "ok"; kind: "policy"; policyTerms: PolicyTerms; problems: string[]; ai: Omit<HybridResult<unknown>, "value"> }
+  | NeedsConnectionResult;
 
 export function chooseMode(
   text: string,
@@ -35,10 +45,14 @@ export function chooseMode(
 export async function parseDocumentInBrowser(text: string, opts: { mode?: HybridMode } = {}): Promise<ClientParse> {
   if (looksLikePolicyText(text)) {
     const res = await parseExpenseInBrowser(text, opts.mode ? { mode: opts.mode } : {});
+    if (res.status === "needs-connection") {
+      return res;
+    }
     if (res.status !== "ok") {
       throw new Error(res.reason);
     }
     return {
+      status: "ok",
       kind: "policy",
       policyTerms: res.policyTerms,
       problems: res.problems,
@@ -47,6 +61,17 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
   }
 
   const mode = opts.mode ?? chooseMode(text);
+  const offline = isNavigatorOffline();
+
+  if (await needsConnectionOffline(mode)) {
+    return needsConnectionResult();
+  }
+
+  if (offline && !isFirebaseConfigured()) {
+    return needsConnectionResult();
+  }
+
+  const effectiveMode: HybridMode = offline ? "only_on_device" : mode;
 
   let r: HybridResult<ContractTerms>;
   try {
@@ -55,17 +80,20 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
       prompt: `Extract the contract terms from this quote / thread:\n\n<document>\n${text}\n</document>`,
       schema: ContractTerms,
       step: "contract",
-      mode,
+      mode: effectiveMode,
     });
   } catch (err) {
     if (err instanceof HybridSchemaError) {
       void logAiCall({
         step: "contract",
-        mode,
+        mode: effectiveMode,
         inferenceSource: err.source,
         latencyMs: err.ms,
         validatorOk: false,
       });
+    }
+    if (isNavigatorOffline()) {
+      return needsConnectionResult();
     }
     throw err;
   }
@@ -75,12 +103,12 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
   const problems = validateTerms(terms);
   void logAiCall({
     step: "contract",
-    mode,
+    mode: effectiveMode,
     inferenceSource: r.source,
     latencyMs: r.ms,
     validatorOk: problems.length === 0,
   });
-  return { kind: "contract", terms, problems, ai: strip(r) };
+  return { status: "ok", kind: "contract", terms, problems, ai: strip(r) };
 }
 
 function strip<T>(r: HybridResult<T>) {

@@ -20,6 +20,10 @@ import {
   hybridGenerate,
   HybridSchemaError,
   type HybridMode,
+  isNavigatorOffline,
+  needsConnectionOffline,
+  needsConnectionResult,
+  type NeedsConnectionResult,
 } from "../hybrid-ai";
 
 export interface ExplainExceptionAiInfo {
@@ -48,7 +52,8 @@ export type ExplainExceptionResult<TFallback = unknown> =
       status: "fallback";
       fallback: TFallback;
       reason: string;
-    };
+    }
+  | NeedsConnectionResult;
 
 export type ExceptionPolicyContext = Pick<PolicyTerms, "traveler" | "exception_clause">;
 
@@ -62,9 +67,18 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
   opts: ExplainExceptionOptions<TFallback> = {},
 ): Promise<ExplainExceptionResult<TFallback>> {
   const mode = opts.mode ?? chooseExceptionMode();
+  const offline = isNavigatorOffline();
   const trimmed = note.trim();
 
+  // Never guess or contact server/cloud when offline and on-device is unavailable.
+  if (await needsConnectionOffline(mode)) {
+    return needsConnectionResult();
+  }
+
   const runFallback = async (reason: string): Promise<ExplainExceptionResult<TFallback>> => {
+    if (isNavigatorOffline()) {
+      return needsConnectionResult();
+    }
     const fallback = opts.serverFallback ? await opts.serverFallback() : (undefined as TFallback);
     return { status: "fallback", fallback, reason };
   };
@@ -81,13 +95,15 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
     return runFallback("firebase-unavailable");
   }
 
+  const effectiveMode: HybridMode = offline && !opts.ai ? "only_on_device" : mode;
+
   try {
     const r = await hybridGenerate({
       system: EXCEPTION_SYSTEM,
       prompt: exceptionPrompt(terms, trimmed),
       schema: RawModelException,
       step: "exception",
-      mode,
+      mode: effectiveMode,
       ...(opts.ai ? { ai: opts.ai } : {}),
     });
 
@@ -98,7 +114,7 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
     });
     void logAiCall({
       step: "exception",
-      mode,
+      mode: effectiveMode,
       inferenceSource: r.source,
       latencyMs: r.ms,
       validatorOk: validation.ok,
@@ -118,7 +134,7 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
     if (err instanceof HybridSchemaError) {
       void logAiCall({
         step: "exception",
-        mode,
+        mode: effectiveMode,
         inferenceSource: err.source,
         latencyMs: err.ms,
         validatorOk: false,

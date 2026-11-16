@@ -20,6 +20,10 @@ import {
   hybridGenerate,
   HybridSchemaError,
   type HybridMode,
+  isNavigatorOffline,
+  needsConnectionOffline,
+  needsConnectionResult,
+  type NeedsConnectionResult,
 } from "../hybrid-ai";
 
 export interface ParseExpenseAiInfo {
@@ -47,7 +51,8 @@ export type ParseExpenseResult<TFallback = unknown> =
       kind: "fallback";
       fallback: TFallback;
       reason: string;
-    };
+    }
+  | NeedsConnectionResult;
 
 export function chooseExpenseMode(
   text: string,
@@ -63,9 +68,19 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
   opts: ParseExpenseOptions<TFallback> = {},
 ): Promise<ParseExpenseResult<TFallback>> {
   const mode = opts.mode ?? chooseExpenseMode(text);
+  const offline = isNavigatorOffline();
+
+  // Never guess or contact server/cloud when offline and on-device is unavailable.
+  if (await needsConnectionOffline(mode)) {
+    return needsConnectionResult();
+  }
+
   const available = Boolean(opts.ai) || isFirebaseConfigured();
 
   const runFallback = async (reason: string): Promise<ParseExpenseResult<TFallback>> => {
+    if (isNavigatorOffline()) {
+      return needsConnectionResult();
+    }
     const fallback = opts.serverFallback ? await opts.serverFallback() : (undefined as TFallback);
     return { status: "fallback", kind: "fallback", fallback, reason };
   };
@@ -74,20 +89,22 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
     return runFallback("firebase-unavailable");
   }
 
+  const effectiveMode: HybridMode = offline && !opts.ai ? "only_on_device" : mode;
+
   try {
     const r = await hybridGenerate({
       system: POLICY_SYSTEM,
       prompt: policyPrompt(text),
       schema: PolicyTerms,
       step: "expense",
-      mode,
+      mode: effectiveMode,
       ...(opts.ai ? { ai: opts.ai } : {}),
     });
 
     const validation = validateExpenseTerms(r.value, text);
     void logAiCall({
       step: "expense",
-      mode,
+      mode: effectiveMode,
       inferenceSource: r.source,
       latencyMs: r.ms,
       validatorOk: validation.ok,
@@ -107,7 +124,7 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
     if (err instanceof HybridSchemaError) {
       void logAiCall({
         step: "expense",
-        mode,
+        mode: effectiveMode,
         inferenceSource: err.source,
         latencyMs: err.ms,
         validatorOk: false,

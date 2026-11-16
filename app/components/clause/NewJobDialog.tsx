@@ -28,6 +28,7 @@ interface QuoteIntakeFormProps {
   onParse: () => void;
   busy: boolean;
   mountParseId: boolean;
+  offlineNotice?: string | null | undefined;
 }
 
 function StepPillRow() {
@@ -66,6 +67,7 @@ function QuoteIntakeForm({
   onParse,
   busy,
   mountParseId,
+  offlineNotice,
 }: QuoteIntakeFormProps) {
   const isQuoteSample = quoteText.trim() === SAMPLE_QUOTE_TEXT.trim();
   const isPolicySample = quoteText.trim() === SAMPLE_POLICY_TEXT.trim();
@@ -174,6 +176,15 @@ function QuoteIntakeForm({
           )}
         </Button>
       </div>
+      {offlineNotice ? (
+        <div
+          role="alert"
+          data-testid="offline-needs-connection"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900"
+        >
+          {offlineNotice}
+        </div>
+      ) : null}
       {isFirebaseConfigured() ? <WhatLeavesThisDevice /> : null}
     </div>
   );
@@ -185,6 +196,7 @@ interface EmptyJobStateProps {
   onParse: () => void;
   busy: boolean;
   dialogOpen: boolean;
+  offlineNotice?: string | null | undefined;
 }
 
 export function EmptyJobState({
@@ -193,6 +205,7 @@ export function EmptyJobState({
   onParse,
   busy,
   dialogOpen,
+  offlineNotice,
 }: EmptyJobStateProps) {
   return (
     <div className="mx-auto flex w-full max-w-[740px] flex-1 flex-col justify-center px-4 py-10 sm:px-6 sm:py-12">
@@ -222,6 +235,7 @@ export function EmptyJobState({
         onParse={onParse}
         busy={busy}
         mountParseId={!dialogOpen}
+        offlineNotice={offlineNotice}
       />
     </div>
   );
@@ -234,6 +248,7 @@ interface NewJobDialogProps {
   onQuoteTextChange: (text: string) => void;
   onParse: () => void;
   busy: boolean;
+  offlineNotice?: string | null | undefined;
 }
 
 export function NewJobDialog({
@@ -243,6 +258,7 @@ export function NewJobDialog({
   onQuoteTextChange,
   onParse,
   busy,
+  offlineNotice,
 }: NewJobDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -265,6 +281,7 @@ export function NewJobDialog({
             onParse={onParse}
             busy={busy}
             mountParseId={true}
+            offlineNotice={offlineNotice}
           />
         ) : null}
 

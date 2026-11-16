@@ -56,7 +56,11 @@ import { explainExceptionInBrowser } from "@/lib/clause-ai/exception";
 import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
 import { isFirebaseConfigured } from "@/lib/firebase";
-import { formatAiSource } from "@/lib/hybrid-ai";
+import {
+  formatAiSource,
+  isNavigatorOffline,
+  NEEDS_CONNECTION_MESSAGE,
+} from "@/lib/hybrid-ai";
 import { SandboxToolsDrawer } from "./SandboxToolsDrawer";
 import { MetalMandatePanel, type MandateStateLite } from "./MetalMandatePanel";
 import { ContractorPhone } from "./ContractorPhone";
@@ -233,7 +237,19 @@ export function ClauseJobWorkspace() {
 
   const [hoveredClauseId, setHoveredClauseId] = useState<string | null>(null);
   const [pinnedClauseId, setPinnedClauseId] = useState<string | null>(null);
+  const [parseOfflineNotice, setParseOfflineNotice] = useState<string | null>(null);
+  const [exceptionOfflineNotice, setExceptionOfflineNotice] = useState<string | null>(null);
   const activeClauseId = hoveredClauseId ?? pinnedClauseId;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOnline = () => {
+      setParseOfflineNotice(null);
+      setExceptionOfflineNotice(null);
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
 
   const proofInputRef = useRef<HTMLInputElement>(null);
   const workspaceGridRef = useRef<HTMLDivElement>(null);
@@ -336,6 +352,7 @@ export function ClauseJobWorkspace() {
   async function handleParseQuote() {
     const trimmed = quoteText.trim();
     const usedText = trimmed || SAMPLE_QUOTE_TEXT;
+    setParseOfflineNotice(null);
     await runExclusive(
       "Reading document…",
       async () => {
@@ -348,6 +365,11 @@ export function ClauseJobWorkspace() {
                 trimmed ? { text: trimmed } : { useSample: true, sampleKind: "policy" },
               ),
           });
+          if (parsed.status === "needs-connection") {
+            setParseOfflineNotice(parsed.message);
+            toast.error(parsed.message);
+            return null;
+          }
           if (parsed.status === "fallback") {
             if (isFirebaseConfigured()) {
               toast.message("On-device read unavailable; reading on the server.");
@@ -362,17 +384,27 @@ export function ClauseJobWorkspace() {
           toast.message(formatAiSource(parsed.ai));
           return res;
         }
-        if (isFirebaseConfigured()) {
-          try {
-            const parsed = await parseDocumentInBrowser(usedText);
-            const res = await createFromTermsMut.mutateAsync(
-              parsed.kind === "policy"
-                ? { kind: "policy", policyTerms: parsed.policyTerms, aiSource: parsed.ai }
-                : { kind: "contract", terms: parsed.terms, aiSource: parsed.ai },
-            );
-            toast.message(formatAiSource(parsed.ai));
-            return res;
-          } catch (err) {
+        try {
+          const parsed = await parseDocumentInBrowser(usedText);
+          if (parsed.kind === "needs-connection") {
+            setParseOfflineNotice(parsed.message);
+            toast.error(parsed.message);
+            return null;
+          }
+          const res = await createFromTermsMut.mutateAsync(
+            parsed.kind === "policy"
+              ? { kind: "policy", policyTerms: parsed.policyTerms, aiSource: parsed.ai }
+              : { kind: "contract", terms: parsed.terms, aiSource: parsed.ai },
+          );
+          toast.message(formatAiSource(parsed.ai));
+          return res;
+        } catch (err) {
+          if (isNavigatorOffline()) {
+            setParseOfflineNotice(NEEDS_CONNECTION_MESSAGE);
+            toast.error(NEEDS_CONNECTION_MESSAGE);
+            return null;
+          }
+          if (isFirebaseConfigured()) {
             console.warn("[clause] Browser parse failed; using server parse.", err);
             toast.message("On-device read unavailable; reading on the server.");
           }
@@ -382,7 +414,9 @@ export function ClauseJobWorkspace() {
         );
       },
       (res) => {
+        if (!res) return;
         saveRawQuoteForJob(res.summary.id, usedText);
+        setParseOfflineNotice(null);
         setNewJobOpen(false);
         setSearchParams(
           (prev) => {
@@ -619,6 +653,7 @@ export function ClauseJobWorkspace() {
     if (!activeJobId) return;
     const trimmed = exceptionNote.trim();
     const usedNote = trimmed || SAMPLE_EXCEPTION_NOTE_TEXT;
+    setExceptionOfflineNotice(null);
     const lastDeclined = job?.policyTerms
       ? [...job.transactions]
           .reverse()
@@ -642,6 +677,11 @@ export function ClauseJobWorkspace() {
                   : { jobId: activeJobId, useSample: true },
               ),
           });
+          if (explained.status === "needs-connection") {
+            setExceptionOfflineNotice(explained.message);
+            toast.error(explained.message);
+            return null;
+          }
           if (explained.status === "fallback") {
             if (isFirebaseConfigured()) {
               toast.message("On-device explanation unavailable; evaluating on the server.");
@@ -657,6 +697,12 @@ export function ClauseJobWorkspace() {
           });
         }
 
+        if (isNavigatorOffline()) {
+          setExceptionOfflineNotice(NEEDS_CONNECTION_MESSAGE);
+          toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
+
         return requestExceptionMut.mutateAsync(
           trimmed
             ? { jobId: activeJobId, note: trimmed }
@@ -664,6 +710,8 @@ export function ClauseJobWorkspace() {
         );
       },
       (res) => {
+        if (!res) return;
+        setExceptionOfflineNotice(null);
         const cap = res.proposal?.one_time_cap;
         toast.success(
           cap
@@ -1071,10 +1119,14 @@ export function ClauseJobWorkspace() {
       ) : !job || !summary ? (
         <EmptyJobState
           quoteText={quoteText}
-          onQuoteTextChange={setQuoteText}
+          onQuoteTextChange={(next) => {
+            setQuoteText(next);
+            if (parseOfflineNotice) setParseOfflineNotice(null);
+          }}
           onParse={() => void handleParseQuote()}
           busy={Boolean(busyLabel)}
           dialogOpen={newJobOpen}
+          offlineNotice={parseOfflineNotice}
         />
       ) : (
         <>
@@ -1197,11 +1249,18 @@ export function ClauseJobWorkspace() {
       {/* Dialogs & Drawers */}
       <NewJobDialog
         open={newJobOpen}
-        onOpenChange={setNewJobOpen}
+        onOpenChange={(open) => {
+          setNewJobOpen(open);
+          if (!open) setParseOfflineNotice(null);
+        }}
         quoteText={quoteText}
-        onQuoteTextChange={setQuoteText}
+        onQuoteTextChange={(next) => {
+          setQuoteText(next);
+          if (parseOfflineNotice) setParseOfflineNotice(null);
+        }}
         onParse={() => void handleParseQuote()}
         busy={Boolean(busyLabel)}
+        offlineNotice={parseOfflineNotice}
       />
 
       <SandboxToolsDrawer
@@ -1228,8 +1287,12 @@ export function ClauseJobWorkspace() {
           isFrozen={isCardFrozen}
           onClose={() => setPhoneVisible(false)}
           exceptionNote={exceptionNote}
-          onExceptionNoteChange={setExceptionNote}
+          onExceptionNoteChange={(next) => {
+            setExceptionNote(next);
+            if (exceptionOfflineNotice) setExceptionOfflineNotice(null);
+          }}
           onRequestException={() => void handleRequestException()}
+          offlineNotice={exceptionOfflineNotice}
           busy={Boolean(busyLabel)}
         />
       ) : null}

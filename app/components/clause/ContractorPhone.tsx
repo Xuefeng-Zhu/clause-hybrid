@@ -34,6 +34,7 @@ interface ContractorPhoneProps {
   exceptionNote?: string;
   onExceptionNoteChange?: (note: string) => void;
   onRequestException?: () => void;
+  offlineNotice?: string | null | undefined;
   busy?: boolean;
 }
 
@@ -124,6 +125,7 @@ export function ContractorPhone({
   exceptionNote,
   onExceptionNoteChange,
   onRequestException,
+  offlineNotice,
   busy = false,
 }: ContractorPhoneProps) {
   const isPolicy = job?.kind === "policy" || summary?.kind === "policy";
@@ -362,6 +364,15 @@ export function ContractorPhone({
                       onChange={(e) => onExceptionNoteChange?.(e.target.value)}
                       className="w-full select-text resize-none rounded-lg border border-stone-200 bg-[#FAF8F3] px-2 py-1.5 text-[11px] leading-snug text-stone-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#0F7B55]"
                     />
+                    {offlineNotice ? (
+                      <div
+                        role="alert"
+                        data-testid="exception-offline-needs-connection"
+                        className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-900"
+                      >
+                        {offlineNotice}
+                      </div>
+                    ) : null}
                     <button
                       id="requestException"
                       type="button"

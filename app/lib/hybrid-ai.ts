@@ -41,6 +41,36 @@ export interface HybridRequest<S extends z.ZodTypeAny> {
 }
 
 export const ON_DEVICE_MODEL_LABEL = "Gemini Nano";
+export const NEEDS_CONNECTION_MESSAGE = "Needs a connection. Nothing was sent.";
+
+export interface NeedsConnectionResult {
+  status: "needs-connection";
+  kind: "needs-connection";
+  message: string;
+}
+
+export function needsConnectionResult(): NeedsConnectionResult {
+  return {
+    status: "needs-connection",
+    kind: "needs-connection",
+    message: NEEDS_CONNECTION_MESSAGE,
+  };
+}
+
+export function isNavigatorOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+/**
+ * True when the browser reports offline AND either on-device AI is unavailable
+ * or the configured mode disallows on-device inference (`only_in_cloud`).
+ */
+export async function needsConnectionOffline(mode: HybridMode): Promise<boolean> {
+  if (!isNavigatorOffline()) return false;
+  if (mode === "only_in_cloud") return true;
+  const avail = await onDeviceAvailability();
+  return avail !== "available";
+}
 
 /** Error thrown when model inference completed but JSON extraction or Zod schema parsing failed. */
 export class HybridSchemaError extends Error {
