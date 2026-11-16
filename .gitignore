@@ -41,3 +41,11 @@ learnings.md
 .vercel/
 .agent-native/
 data/*.lock
+
+# Mobile app local secrets/config
+apps/mobile/google-services.json
+apps/mobile/GoogleService-Info.plist
+apps/mobile/android/
+apps/mobile/ios/
+apps/mobile/node_modules/
+apps/mobile/.expo/
