@@ -60,6 +60,14 @@ declare global {
 }
 
 function readEnv(key: string): string {
+  if (
+    typeof process !== "undefined" &&
+    process.env?.VITEST &&
+    Object.prototype.hasOwnProperty.call(process.env, key)
+  ) {
+    const p = process.env[key];
+    return typeof p === "string" ? p.trim() : "";
+  }
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
   const val = env?.[key];
   return typeof val === "string" ? val.trim() : "";
