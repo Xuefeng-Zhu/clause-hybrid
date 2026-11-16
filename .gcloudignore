@@ -1,0 +1,19 @@
+# Files excluded from gcloud builds submit (keeps .env.local and node_modules out)
+.gcloudignore
+.dockerignore
+.git
+node_modules
+.env
+.env.*
+!.env.example
+*.local
+.output
+.react-router
+.generated
+build
+dist
+data
+.agent-native
+.firebase
+legacy
+apps/mobile
