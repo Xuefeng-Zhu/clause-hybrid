@@ -1,11 +1,15 @@
-import { IconMessageChatbot } from "@tabler/icons-react";
+import { IconLoader2, IconMessageChatbot } from "@tabler/icons-react";
+import { useState } from "react";
 
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { explainDeclineInBrowser, type ExplainDeclineResult } from "@/lib/clause-ai/decline";
 import { cn } from "@/lib/utils";
+
+import { AiSourceBadge } from "./AiSourceBadge";
 
 import {
   formatCurrency,
@@ -25,7 +29,8 @@ interface TransactionFeedItemProps {
   isDimmed: boolean;
   onHoverClause: (clauseId: string | null) => void;
   onSelectClause: (clauseId: string) => void;
-  onAskClause: (txnId: string, headline: string) => void;
+  /** Kept for callers; the Explain button now answers inline through Firebase AI Logic. */
+  onAskClause?: (txnId: string, headline: string) => void;
 }
 
 export function TransactionFeedItem({
@@ -37,8 +42,28 @@ export function TransactionFeedItem({
   isDimmed,
   onHoverClause,
   onSelectClause,
-  onAskClause,
 }: TransactionFeedItemProps) {
+  const [explainState, setExplainState] = useState<
+    { status: "loading" } | ExplainDeclineResult | null
+  >(null);
+
+  async function explainDecline() {
+    const e = txn.explanation;
+    if (!e || explainState?.status === "loading") return;
+    setExplainState({ status: "loading" });
+    const r = await explainDeclineInBrowser({
+      merchant_name: txn.merchant_name,
+      amount: txn.amount,
+      currency: txn.currency,
+      headline: e.headline,
+      ...(e.failure_reason ? { failure_reason: e.failure_reason } : {}),
+      ...(e.clause_id ? { clause_id: e.clause_id } : {}),
+      ...(e.clause_quote ? { clause_quote: e.clause_quote } : {}),
+      ...(e.can_request_exception ? { can_request_exception: true } : {}),
+    });
+    setExplainState(r);
+  }
+
   const isDeclined = Boolean(txn.failure_reason || txn.explanation);
   const humanReason = isDeclined
     ? isPolicy
@@ -161,18 +186,38 @@ export function TransactionFeedItem({
           {isDeclined && txn.explanation ? (
             <button
               type="button"
-              onClick={() =>
-                onAskClause(txn.transaction_id, txn.explanation!.headline)
-              }
+              onClick={() => void explainDecline()}
+              disabled={explainState?.status === "loading"}
               title="Ask Clause about this decline"
               aria-label="Ask Clause about this decline"
               className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-stone-400 opacity-0 transition-opacity hover:bg-stone-200/60 hover:text-stone-700 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F7B55]/40 group-hover:opacity-100"
             >
-              <IconMessageChatbot className="size-3.5" />
+              {explainState?.status === "loading" ? (
+                <IconLoader2 className="size-3.5 animate-spin" />
+              ) : (
+                <IconMessageChatbot className="size-3.5" />
+              )}
               <span>Explain</span>
             </button>
           ) : null}
         </div>
+
+        {explainState && explainState.status !== "loading" ? (
+          <div
+            data-testid="decline-explanation"
+            className="mt-2 rounded-md border border-stone-200 bg-white/80 px-2.5 py-2 text-xs leading-relaxed text-stone-700"
+          >
+            <p>{explainState.explanation}</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+              {explainState.status === "ok" ? (
+                <AiSourceBadge info={explainState.ai} />
+              ) : (
+                <span>From the card rules</span>
+              )}
+              <span>Nothing was paid. Card rules decided this, not AI.</span>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

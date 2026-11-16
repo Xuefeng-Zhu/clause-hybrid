@@ -160,9 +160,17 @@ export function ActionBar({
     };
   })();
 
-  const approveReleaseLabel = pendingRelease
-    ? `${formatMilestoneNumber(pendingRelease.milestone_id ?? "M2")} proof received — Approve release ${formatCurrency(pendingRelease.amount ?? 0, pendingRelease.currency)}`
-    : "Approve release";
+  const releaseMilestoneLabel = formatMilestoneNumber(pendingRelease?.milestone_id ?? "M2");
+  const releaseAmountLabel = pendingRelease
+    ? formatCurrency(pendingRelease.amount ?? 0, pendingRelease.currency)
+    : "";
+  const approveReleaseLabel = !pendingRelease
+    ? "Approve release"
+    : pendingRelease.verdict?.verdict === "insufficient"
+      ? `${releaseMilestoneLabel} proof doesn't meet requirements — ${releaseAmountLabel} stays locked`
+      : pendingRelease.verdict?.verdict === "unclear"
+        ? `${releaseMilestoneLabel} proof needs a look — Approve release ${releaseAmountLabel}`
+        : `${releaseMilestoneLabel} proof meets requirements — Approve release ${releaseAmountLabel}`;
 
   const approveCoLabel = coDiff
     ? `Change order: ${formatSignedDelta(coDiff.totalDelta, summary.currency)}${
@@ -645,7 +653,8 @@ export function ActionBar({
                     )}
                   </span>
                   <span className="font-semibold tabular-nums text-stone-900">
-                    +{formatCurrency(pendingRelease.amount ?? 0, pendingRelease.currency)}
+                    {pendingRelease.verdict?.verdict === "insufficient" ? "Held " : "+"}
+                    {formatCurrency(pendingRelease.amount ?? 0, pendingRelease.currency)}
                   </span>
                 </div>
                 {pendingRelease.aiSource ? (

@@ -111,6 +111,8 @@ export function MilestoneBar({
     job.pending?.kind === "release_milestone"
       ? job.pending.milestone_id
       : undefined;
+  const pendingVerdict =
+    job.pending?.kind === "release_milestone" ? job.pending.verdict?.verdict : undefined;
 
   return (
     <div className="space-y-2.5">
@@ -178,7 +180,11 @@ export function MilestoneBar({
           const statusLabel = isReleased
             ? "Released"
             : pendingReleaseId === m.id
-              ? "Proof received"
+              ? pendingVerdict === "insufficient"
+                ? "Proof rejected"
+                : pendingVerdict === "unclear"
+                  ? "Proof needs review"
+                  : "Proof received"
               : isAwaiting
                 ? "Awaiting proof"
                 : isSigningDraft
