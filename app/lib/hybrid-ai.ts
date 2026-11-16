@@ -1,0 +1,121 @@
+/**
+ * Hybrid inference wrapper around Firebase AI Logic.
+ *
+ * On-device (Gemini Nano via Chrome's Prompt API) when available, cloud Gemini otherwise.
+ * Every result says where it ran, which model, and how long it took, so the UI can show it
+ * and the server can record it. The model only ever returns structured JSON; money decisions
+ * stay in deterministic code.
+ */
+import { getGenerativeModel, InferenceMode, type AI } from "firebase/ai";
+import { z } from "zod";
+
+import { getDefaultCloudModel, getFirebaseAI, getRemoteConfigString } from "./firebase";
+
+export type HybridMode = "prefer_on_device" | "only_on_device" | "prefer_in_cloud" | "only_in_cloud";
+export type AiSource = "on_device" | "in_cloud";
+
+export interface HybridResult<T> {
+  value: T;
+  source: AiSource;
+  model: string;
+  ms: number;
+}
+
+export interface HybridRequest<S extends z.ZodTypeAny> {
+  system: string;
+  prompt: string;
+  schema: S;
+  mode?: HybridMode;
+  cloudModel?: string;
+  /** Injected in tests. */
+  ai?: AI;
+}
+
+export const ON_DEVICE_MODEL_LABEL = "Gemini Nano";
+
+const MODE_MAP: Record<HybridMode, (typeof InferenceMode)[keyof typeof InferenceMode]> = {
+  prefer_on_device: InferenceMode.PREFER_ON_DEVICE,
+  only_on_device: InferenceMode.ONLY_ON_DEVICE,
+  prefer_in_cloud: InferenceMode.PREFER_IN_CLOUD,
+  only_in_cloud: InferenceMode.ONLY_IN_CLOUD,
+};
+
+/** JSON Schema for the model, without the $schema key that the APIs reject. */
+export function toModelJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  const json = z.toJSONSchema(schema, { target: "draft-7" }) as Record<string, unknown>;
+  delete json.$schema;
+  return json;
+}
+
+/** Strip a ```json fence if a model wraps its answer in one. */
+export function extractJson(text: string): unknown {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return JSON.parse(fenced?.[1] ?? trimmed);
+}
+
+function now(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+export async function hybridGenerate<S extends z.ZodTypeAny>(
+  req: HybridRequest<S>,
+): Promise<HybridResult<z.infer<S>>> {
+  const mode = req.mode ?? (getRemoteConfigString("parse_mode", "prefer_on_device") as HybridMode);
+  const cloudModel = req.cloudModel ?? getRemoteConfigString("cloud_model", getDefaultCloudModel());
+  const jsonSchema = toModelJsonSchema(req.schema);
+  const ai = req.ai ?? getFirebaseAI();
+
+  const model = getGenerativeModel(ai, {
+    mode: MODE_MAP[mode] ?? InferenceMode.PREFER_ON_DEVICE,
+    inCloudParams: {
+      model: cloudModel,
+      systemInstruction: req.system,
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseJsonSchema: jsonSchema,
+      },
+    },
+    onDeviceParams: {
+      createOptions: {
+        initialPrompts: [{ role: "system", content: [{ type: "text", value: req.system }] }],
+      },
+      promptOptions: { responseConstraint: jsonSchema },
+    },
+  });
+
+  const started = now();
+  const result = await model.generateContent(req.prompt);
+  const ms = Math.round(now() - started);
+  const response = result.response;
+  const source: AiSource =
+    response.inferenceSource === "on_device" || response.inferenceSource === "in_cloud"
+      ? response.inferenceSource
+      : mode === "only_on_device"
+        ? "on_device"
+        : "in_cloud";
+
+  const value = req.schema.parse(extractJson(response.text()));
+  return { value, source, model: source === "on_device" ? ON_DEVICE_MODEL_LABEL : cloudModel, ms };
+}
+
+export type OnDeviceAvailability = "available" | "downloadable" | "downloading" | "unavailable" | "unsupported";
+
+/** What Chrome says about the on-device model, for the UI. Never throws. */
+export async function onDeviceAvailability(): Promise<OnDeviceAvailability> {
+  try {
+    const LM = (globalThis as unknown as { LanguageModel?: { availability: () => Promise<string> } }).LanguageModel;
+    if (!LM?.availability) return "unsupported";
+    const a = await LM.availability();
+    return (["available", "downloadable", "downloading", "unavailable"] as const).includes(a as never)
+      ? (a as OnDeviceAvailability)
+      : "unavailable";
+  } catch {
+    return "unsupported";
+  }
+}
+
+export function formatAiSource(r: { source: AiSource; model: string; ms: number }): string {
+  const t = r.ms >= 1000 ? `${(r.ms / 1000).toFixed(1)} s` : `${r.ms} ms`;
+  return `${r.source === "on_device" ? "On-device" : "Cloud"} · ${r.model} · ${t}`;
+}
