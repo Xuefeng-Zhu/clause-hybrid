@@ -1,6 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { config } from "../config.js";
+import { CHANGE_ORDER_TOOL_SYSTEM, changeOrderPrompt } from "../../../shared/clause-ai/prompts.js";
+import { RawModelChangeOrder, validateChangeOrderDraft } from "../../../shared/clause-ai/validate.js";
 import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
 import type { ContractTerms } from "./schema.js";
 
@@ -17,16 +17,25 @@ export const ChangeOrderProposal = z.object({
 export type ChangeOrderProposal = z.infer<typeof ChangeOrderProposal>;
 
 export async function draftChangeOrder(terms: ContractTerms, emailText: string): Promise<ChangeOrderProposal> {
-  if (!llmProvider()) return offlineDraft(emailText);
-  const { value: callInput } = await withOfflineFallback(() => callTool({
-    system: "You compare a contractor email against the current contract terms and draft a change-order proposal. Quote the email verbatim in source_quote. Never invent amounts or dates that are not in the email. requires_signed_change_order is true whenever price, scope or schedule changes.",
-    content: `<terms>${JSON.stringify(terms)}</terms>\n<email>${emailText}</email>`,
-    toolName: "propose_change_order",
-    description: "Draft the change order.",
-    schema: z.toJSONSchema(ChangeOrderProposal, { target: "draft-7" }) as Record<string, unknown>,
-    maxTokens: 1500,
-  }), () => offlineDraft(emailText));
-  return ChangeOrderProposal.parse(callInput);
+  const { value: rawDraft } = !llmProvider()
+    ? { value: offlineDraft(emailText) }
+    : await withOfflineFallback(
+        () =>
+          callTool({
+            system: CHANGE_ORDER_TOOL_SYSTEM,
+            content: changeOrderPrompt(terms, emailText),
+            toolName: "propose_change_order",
+            description: "Draft the change order.",
+            schema: z.toJSONSchema(RawModelChangeOrder, { target: "draft-7" }) as Record<string, unknown>,
+            maxTokens: 1500,
+          }),
+        () => offlineDraft(emailText),
+      );
+  const validated = validateChangeOrderDraft(rawDraft, terms, emailText);
+  if (!validated.ok || !validated.proposal) {
+    throw new Error(`Invalid change-order draft: ${validated.errors.join(" ")}`);
+  }
+  return ChangeOrderProposal.parse(validated.proposal);
 }
 
 /** Apply an APPROVED change order to the terms. Pure function; caller re-derives the card plan. */
@@ -44,12 +53,12 @@ export function applyChangeOrder(terms: ContractTerms, co: ChangeOrderProposal):
   return next;
 }
 
-function offlineDraft(emailText: string): ChangeOrderProposal {
+function offlineDraft(emailText: string): RawModelChangeOrder {
   if (!emailText.includes("Q-2026-0412")) throw new Error("Offline mode only understands samples/change-order-email.txt.");
   return {
     summary: "In-stock quartz substitution adds $800 to Milestone 2; completion moves from Dec 18 to Dec 23, 2026.",
     milestone_amount_changes: [
-      { milestone_id: "M2", new_amount: 5800, reason: "Backordered quartz replaced with in-stock quartz (+$800)." },
+      { milestone_id: "M2", delta_amount: 800, reason: "Backordered quartz replaced with in-stock quartz (+$800)." },
     ],
     new_deadline: "2026-12-23",
     requires_signed_change_order: true,

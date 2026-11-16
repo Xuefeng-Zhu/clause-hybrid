@@ -25,6 +25,7 @@ import {
 } from "@/lib/clause-samples";
 import { cn } from "@/lib/utils";
 
+import { AiSourceBadge } from "./AiSourceBadge";
 import {
   cleanVerdictReasoning,
   formatContractDate,
@@ -68,6 +69,7 @@ interface ActionBarProps {
   onCoEmailTextChange: (text: string) => void;
   onDraftChangeOrder: () => void;
   onApproveChangeOrder: () => void;
+  coOfflineNotice?: string | null | undefined;
 
   // Shared reject
   onRejectPending: () => void;
@@ -98,6 +100,7 @@ export function ActionBar({
   onCoEmailTextChange,
   onDraftChangeOrder,
   onApproveChangeOrder,
+  coOfflineNotice,
   onRejectPending,
   onOpenExpenseReport,
 }: ActionBarProps) {
@@ -176,9 +179,14 @@ export function ActionBar({
             <div className="rounded-xl border border-[#D4DFEA] bg-white/95 px-4 py-3 text-xs shadow-2xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <span className="font-semibold text-stone-900">
-                    Proposed change order
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-stone-900">
+                      Proposed change order
+                    </span>
+                    {pendingCo.aiSource ? (
+                      <AiSourceBadge info={pendingCo.aiSource} />
+                    ) : null}
+                  </div>
                   <span className="tabular-nums text-stone-600">
                     Total:{" "}
                     <span className="text-stone-400 line-through">
@@ -762,13 +770,27 @@ export function ActionBar({
                   Propose change order
                 </Button>
               </div>
+              {coOfflineNotice ? (
+                <div
+                  role="alert"
+                  data-testid="co-offline-needs-connection"
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900"
+                >
+                  {coOfflineNotice}
+                </div>
+              ) : null}
             </div>
 
             {/* Structured Before -> After Diff */}
             {coDiff ? (
               <div className="space-y-3 rounded-xl border border-[#CEDCE9] bg-white p-4">
-                <div className="text-xs font-semibold text-stone-900">
-                  Contract &amp; card impact
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-stone-900">
+                    Contract &amp; card impact
+                  </div>
+                  {pendingCo?.aiSource ? (
+                    <AiSourceBadge info={pendingCo.aiSource} />
+                  ) : null}
                 </div>
                 <p className="text-stone-600">{coDiff.summaryText}</p>
 

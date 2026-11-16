@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { ClauseRef, ContractTerms } from "../../server/clause/contract/schema.js";
 import { addDaysIso, PolicyTerms, validatePolicyTerms } from "../../server/clause/expense/schema.js";
-import { missingQuotes, policyClauses } from "./prompts.js";
+import { missingQuotes, policyClauses, type PromptContractContext } from "./prompts.js";
 
 /**
  * Drop null values (recursively) so optional fields the model marked "not present"
@@ -291,6 +291,195 @@ export function validateExceptionExtraction(
       rationale: cleanRationale,
       source_note: (opts.sourceNote ?? "").trim(),
       clause: rule.clause,
+    },
+    errors: [],
+  };
+}
+
+/**
+ * Schema for AI-only change-order drafting.
+ * AI extracts deltas/replacement targets, date, and verbatim source quote;
+ * deterministic code computes all resulting milestone amounts and contract totals.
+ */
+export const RawModelMilestoneChange = z.object({
+  milestone_id: z.string(),
+  delta_amount: z.number().finite().optional(),
+  new_amount: z.number().positive().finite().optional(),
+  reason: z.string(),
+});
+
+export const RawModelChangeOrder = z.object({
+  summary: z.string(),
+  milestone_amount_changes: z.array(RawModelMilestoneChange).default([]),
+  new_deadline: z.string().optional(),
+  requires_signed_change_order: z.boolean().default(true),
+  source_quote: z.string(),
+});
+export type RawModelChangeOrder = z.infer<typeof RawModelChangeOrder>;
+
+export interface CanonicalChangeOrderProposal {
+  summary: string;
+  milestone_amount_changes: Array<{
+    milestone_id: string;
+    new_amount: number;
+    reason: string;
+  }>;
+  new_deadline?: string;
+  requires_signed_change_order: boolean;
+  source_quote: string;
+}
+
+export interface ChangeOrderValidationResult {
+  ok: boolean;
+  draft?: RawModelChangeOrder;
+  proposal?: CanonicalChangeOrderProposal;
+  computed?: {
+    oldTotal: number;
+    newTotal: number;
+    totalDelta: number;
+  };
+  errors: string[];
+}
+
+/**
+ * Deterministic validation & amount calculation for a drafted change order.
+ * AI only drafts deltas/reasons/date/quote; code computes every milestone's `new_amount`
+ * and the new contract total from the authoritative existing contract terms.
+ */
+export function validateChangeOrderDraft(
+  raw: unknown,
+  terms: Pick<PromptContractContext, "milestones" | "total_amount" | "start_date" | "deadline">,
+  sourceEmail?: string,
+): ChangeOrderValidationResult {
+  const parsed = RawModelChangeOrder.safeParse(stripNulls(raw));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: parsed.error.issues.map((i) => `${i.path.join(".") || "root"}: ${i.message}`),
+    };
+  }
+
+  const data = parsed.data;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const cleanSummary = data.summary.trim();
+  const cleanQuote = data.source_quote.trim();
+  const cleanDeadline = data.new_deadline?.trim();
+  const errors: string[] = [];
+
+  if (!cleanSummary) errors.push("Change order summary is required.");
+  if (!cleanQuote) errors.push("Change order source_quote is required.");
+
+  if (cleanQuote && sourceEmail) {
+    const quoteProblems = missingQuotes([{ clause_id: "Change order", quote: cleanQuote }], sourceEmail);
+    if (quoteProblems.length > 0) {
+      errors.push("source_quote was not found verbatim in the contractor email.");
+    }
+  }
+
+  if (cleanDeadline) {
+    if (!isValidIsoDate(cleanDeadline)) {
+      errors.push(`New deadline "${cleanDeadline}" is not a valid YYYY-MM-DD date.`);
+    } else if (terms.start_date && isValidIsoDate(terms.start_date) && cleanDeadline < terms.start_date) {
+      errors.push(`New deadline "${cleanDeadline}" precedes contract start date "${terms.start_date}".`);
+    }
+  }
+
+  const seenMilestones = new Set<string>();
+  const computedChanges: CanonicalChangeOrderProposal["milestone_amount_changes"] = [];
+  const normalizedDraftChanges: RawModelChangeOrder["milestone_amount_changes"] = [];
+  const updatedAmounts = new Map<string, number>(
+    terms.milestones.map((m) => [m.id, m.amount]),
+  );
+
+  for (const ch of data.milestone_amount_changes) {
+    const milestoneId = ch.milestone_id.trim();
+    const reason = ch.reason.trim();
+    if (!milestoneId) {
+      errors.push("Milestone change must include milestone_id.");
+      continue;
+    }
+    if (seenMilestones.has(milestoneId)) {
+      errors.push(`Duplicate change entry for milestone ${milestoneId}.`);
+      continue;
+    }
+    seenMilestones.add(milestoneId);
+
+    const existing = terms.milestones.find((m) => m.id === milestoneId);
+    if (!existing) {
+      errors.push(`Change order references unknown milestone ${milestoneId}.`);
+      continue;
+    }
+    if (!reason) {
+      errors.push(`Milestone change ${milestoneId} must include a reason.`);
+    }
+
+    let computedNew: number | undefined;
+    if (ch.delta_amount !== undefined) {
+      // Deterministic arithmetic always computes resulting milestone amount from existing + delta.
+      computedNew = round2(existing.amount + ch.delta_amount);
+    } else if (ch.new_amount !== undefined) {
+      computedNew = round2(ch.new_amount);
+    } else {
+      errors.push(`Milestone change ${milestoneId} must include delta_amount or new_amount.`);
+      continue;
+    }
+
+    if (!Number.isFinite(computedNew) || computedNew <= 0) {
+      errors.push(`Computed amount for ${milestoneId} (${computedNew}) must be positive.`);
+      continue;
+    }
+
+    updatedAmounts.set(milestoneId, computedNew);
+    computedChanges.push({
+      milestone_id: milestoneId,
+      new_amount: computedNew,
+      reason: reason || `Updated ${milestoneId}`,
+    });
+    normalizedDraftChanges.push({
+      milestone_id: milestoneId,
+      ...(ch.delta_amount !== undefined
+        ? { delta_amount: round2(ch.delta_amount) }
+        : { new_amount: computedNew }),
+      reason: reason || `Updated ${milestoneId}`,
+    });
+  }
+
+  const oldTotal = round2(terms.milestones.reduce((sum, m) => sum + m.amount, 0));
+  const newTotal = round2([...updatedAmounts.values()].reduce((sum, amt) => sum + amt, 0));
+  const totalDelta = round2(newTotal - oldTotal);
+
+  if (computedChanges.length === 0 && !cleanDeadline) {
+    errors.push("Change order proposes neither a milestone amount change nor a new deadline.");
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  const requiresSigned = Boolean(
+    data.requires_signed_change_order || computedChanges.length > 0 || Boolean(cleanDeadline),
+  );
+
+  return {
+    ok: true,
+    draft: {
+      summary: cleanSummary,
+      milestone_amount_changes: normalizedDraftChanges,
+      ...(cleanDeadline ? { new_deadline: cleanDeadline } : {}),
+      requires_signed_change_order: requiresSigned,
+      source_quote: cleanQuote,
+    },
+    proposal: {
+      summary: cleanSummary,
+      milestone_amount_changes: computedChanges,
+      ...(cleanDeadline ? { new_deadline: cleanDeadline } : {}),
+      requires_signed_change_order: requiresSigned,
+      source_quote: cleanQuote,
+    },
+    computed: {
+      oldTotal,
+      newTotal,
+      totalDelta,
     },
     errors: [],
   };

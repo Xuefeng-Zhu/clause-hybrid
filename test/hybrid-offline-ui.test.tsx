@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from "react";
+import { act, createElement, createRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,17 +17,20 @@ vi.mock("@tabler/icons-react", () => {
     "IconCreditCard",
     "IconDeviceLaptop",
     "IconFileDiff",
+    "IconFileCheck",
     "IconFileText",
     "IconLoader2",
     "IconLock",
     "IconReceipt2",
     "IconShieldCheck",
     "IconSparkles",
+    "IconUpload",
     "IconX",
   ];
   return Object.fromEntries(names.map((n) => [n, StubIcon]));
 });
 
+import { ActionBar } from "../app/components/clause/ActionBar";
 import { ContractorPhone } from "../app/components/clause/ContractorPhone";
 import { EmptyJobState } from "../app/components/clause/NewJobDialog";
 import type { ClauseJob, JobSummary } from "../app/components/clause/clause-types";
@@ -114,5 +117,65 @@ describe("offline needs-connection UI notices", () => {
 
     const exceptionAlert = document.querySelector("[data-testid='exception-offline-needs-connection']");
     expect(exceptionAlert?.textContent).toBe("Needs a connection. Nothing was sent.");
+  });
+
+  it("renders AiSourceBadge on pending change order banner in ActionBar", async () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    config.anthropic.apiKey = undefined;
+    const svc = new ContractCardService(
+      new MockIssuingGateway(),
+      new MemoryJobStore(),
+      "owner@example.com",
+    );
+    let contractJob = await svc.createJob({ kind: "text", text: SAMPLES.quote });
+    contractJob = await svc.approveTerms(contractJob.id);
+    contractJob = await svc.proposeChangeOrder(contractJob.id, undefined, {
+      draft: {
+        summary: "In-stock quartz adds $800 to M2.",
+        milestone_amount_changes: [
+          { milestone_id: "M2", delta_amount: 800, reason: "In-stock quartz" },
+        ],
+        new_deadline: "2026-12-23",
+        requires_signed_change_order: true,
+        source_quote: "We can do the in-stock quartz at +$800 for Milestone 2",
+      },
+      aiSource: { source: "in_cloud", model: "gemini-3.5-flash-lite", ms: 950 },
+    });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root!.render(
+        createElement(ActionBar, {
+          job: contractJob as unknown as ClauseJob,
+          summary: summarize(contractJob) as unknown as JobSummary,
+          busyLabel: null,
+          onCancelBusy: () => {},
+          onApproveTerms: () => {},
+          proofSheetOpen: false,
+          onProofSheetOpenChange: () => {},
+          proofKind: "photos",
+          onProofKindChange: () => {},
+          proofInputRef: createRef<HTMLInputElement>(),
+          stagedProofFiles: [],
+          onStageSelectedFiles: () => {},
+          onRemoveStagedFile: () => {},
+          onSubmitProof: () => {},
+          onApproveRelease: () => {},
+          coSheetOpen: false,
+          onCoSheetOpenChange: () => {},
+          coEmailText: "",
+          onCoEmailTextChange: () => {},
+          onDraftChangeOrder: () => {},
+          onApproveChangeOrder: () => {},
+          onRejectPending: () => {},
+        }),
+      );
+    });
+
+    const badge = document.querySelector("[data-testid='ai-source-badge']");
+    expect(badge?.textContent).toContain("Cloud · gemini-3.5-flash-lite · 950 ms");
   });
 });

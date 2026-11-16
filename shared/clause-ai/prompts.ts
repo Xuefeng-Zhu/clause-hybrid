@@ -58,6 +58,37 @@ export function exceptionPrompt(
   return `<traveler>${terms.traveler}</traveler>\n<exception_clause>${JSON.stringify(terms.exception_clause)}</exception_clause>\n<employee_note>${note}</employee_note>`;
 }
 
+export interface PromptContractContext {
+  contract_ref: string;
+  contractor_name: string;
+  client_name: string;
+  project: string;
+  currency: string;
+  total_amount: number;
+  milestones: Array<{ id: string; name: string; amount: number }>;
+  start_date?: string | undefined;
+  deadline: { date: string; clause: { clause_id: string; quote: string } };
+  change_order_clause?: { clause_id: string; quote: string } | undefined;
+}
+
+const CHANGE_ORDER_SYSTEM_BODY = `You compare a contractor email against the current contract terms and draft a change-order proposal.
+Rules:
+- Copy verbatim sentence(s) from the email into source_quote. Never paraphrase source_quote.
+- Never invent amounts or dates that are not in the email.
+- For each affected milestone in milestone_amount_changes, provide milestone_id, reason, and either delta_amount (the signed change from the email, e.g. 800 for "+$800" or -200 for "-$200") OR new_amount only if the email gives a replacement dollar figure. Prefer delta_amount when the email expresses a change; do not calculate new milestone sums or contract totals yourself — deterministic code computes all resulting amounts.
+- If the email specifies a revised completion date, set new_deadline to YYYY-MM-DD (otherwise null).
+- requires_signed_change_order is true whenever price, scope, or schedule changes.`;
+
+export const CHANGE_ORDER_SYSTEM = `${CHANGE_ORDER_SYSTEM_BODY}
+Return only JSON that matches the provided schema.`;
+
+export const CHANGE_ORDER_TOOL_SYSTEM = `${CHANGE_ORDER_SYSTEM_BODY}
+Return the result only through the propose_change_order tool.`;
+
+export function changeOrderPrompt(terms: PromptContractContext, emailText: string): string {
+  return `<terms>${JSON.stringify(terms)}</terms>\n<email>${emailText}</email>`;
+}
+
 export function looksLikePolicyText(t: string): boolean {
   if (t.includes("TR-2611") || /TRAVEL\s*&\s*EXPENSE\s*POLICY/i.test(t)) return true;
   if (/TRIP\s+REQUEST/i.test(t) && /Traveler:/i.test(t)) return true;

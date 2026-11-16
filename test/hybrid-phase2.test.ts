@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MockIssuingGateway } from "../server/clause/airwallex/mock.js";
+import { ContractTerms } from "../server/clause/contract/schema.js";
 import { SAMPLE_EXCEPTION_NOTE, SAMPLE_POLICY_TERMS } from "../server/clause/fixtures.js";
+import { ContractCardService } from "../server/clause/milestones/service.js";
+import { MemoryJobStore } from "../server/clause/store/jobStore.js";
 import {
   computeValidatedExceptionCap,
+  validateChangeOrderDraft,
   validateExceptionExtraction,
   validateExpenseTerms,
 } from "../shared/clause-ai/validate.js";
@@ -85,10 +90,23 @@ const { logAiCall, resetAiLogForTest } = await import("../app/lib/ai-log.js");
 const { NEEDS_CONNECTION_MESSAGE } = await import("../app/lib/hybrid-ai.js");
 const { parseExpenseInBrowser } = await import("../app/lib/clause-ai/expense.js");
 const { explainExceptionInBrowser } = await import("../app/lib/clause-ai/exception.js");
+const { draftChangeOrderInBrowser } = await import("../app/lib/clause-ai/changeOrder.js");
 const { parseDocumentInBrowser } = await import("../app/lib/clause-ai/parse.js");
 
 const quoteSample = readFileSync(
   new URL("../samples/quote-maple-street-cafe.txt", import.meta.url),
+  "utf8",
+);
+const quoteTerms = ContractTerms.parse(
+  JSON.parse(
+    readFileSync(
+      new URL("../samples/quote-maple-street-cafe.terms.json", import.meta.url),
+      "utf8",
+    ),
+  ),
+);
+const coEmailSample = readFileSync(
+  new URL("../samples/change-order-email.txt", import.meta.url),
   "utf8",
 );
 const policySample = readFileSync(
@@ -527,5 +545,116 @@ describe("ai-log Firestore telemetry", () => {
         validatorOk: false,
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("validateChangeOrderDraft & draftChangeOrderInBrowser", () => {
+  it("computes milestone new_amount and contract totals deterministically from delta_amount", () => {
+    const res = validateChangeOrderDraft(
+      {
+        summary: "In-stock quartz adds $800 to M2 and pushes deadline to Dec 23.",
+        milestone_amount_changes: [
+          {
+            milestone_id: "M2",
+            delta_amount: 800,
+            new_amount: 1234, // deliberately wrong AI arithmetic; code ignores when delta_amount present
+            reason: "In-stock quartz upgrade (+$800).",
+          },
+        ],
+        new_deadline: "2026-12-23",
+        requires_signed_change_order: false, // code enforces true on price/date change
+        source_quote:
+          "We can do the in-stock quartz at +$800 for Milestone 2, but installation slips a week, so we'd need until December 23 to finish.",
+      },
+      quoteTerms,
+      coEmailSample,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.proposal?.milestone_amount_changes[0]?.new_amount).toBe(5800);
+    expect(res.computed).toEqual({ oldTotal: 12000, newTotal: 12800, totalDelta: 800 });
+    expect(res.proposal?.requires_signed_change_order).toBe(true);
+  });
+
+  it("rejects unknown milestones, bad dates, non-positive totals, and fabricated source quotes", () => {
+    const unknownMs = validateChangeOrderDraft(
+      {
+        summary: "Update M9",
+        milestone_amount_changes: [{ milestone_id: "M9", delta_amount: 100, reason: "extra" }],
+        requires_signed_change_order: true,
+        source_quote: "We can do the in-stock quartz at +$800 for Milestone 2",
+      },
+      quoteTerms,
+      coEmailSample,
+    );
+    expect(unknownMs.ok).toBe(false);
+    expect(unknownMs.errors.join()).toMatch(/unknown milestone/i);
+
+    const badQuote = validateChangeOrderDraft(
+      {
+        summary: "Free change",
+        milestone_amount_changes: [{ milestone_id: "M2", delta_amount: 800, reason: "quartz" }],
+        requires_signed_change_order: true,
+        source_quote: "Totally invented sentence not in the contractor email.",
+      },
+      quoteTerms,
+      coEmailSample,
+    );
+    expect(badQuote.ok).toBe(false);
+    expect(badQuote.errors.join()).toMatch(/verbatim/i);
+
+    const badDate = validateChangeOrderDraft(
+      {
+        summary: "Bad date",
+        milestone_amount_changes: [],
+        new_deadline: "2026-02-30",
+        requires_signed_change_order: true,
+        source_quote: "We can do the in-stock quartz at +$800 for Milestone 2",
+      },
+      quoteTerms,
+      coEmailSample,
+    );
+    expect(badDate.ok).toBe(false);
+  });
+
+  it("drafts in browser using Remote Config step mode, validates deterministically, falls back on failure, and blocks offline", async () => {
+    mockReply(
+      JSON.stringify({
+        summary: "Add $800 to M2 and extend deadline to Dec 23.",
+        milestone_amount_changes: [
+          { milestone_id: "M2", delta_amount: 800, reason: "In-stock quartz substitution." },
+        ],
+        new_deadline: "2026-12-23",
+        requires_signed_change_order: true,
+        source_quote:
+          "We can do the in-stock quartz at +$800 for Milestone 2, but installation slips a week, so we'd need until December 23 to finish.",
+      }),
+      "in_cloud",
+    );
+    const serverFallback = vi.fn(async () => ({ server: true }));
+    const res = await draftChangeOrderInBrowser(quoteTerms, coEmailSample, { serverFallback });
+
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") return;
+    expect(res.proposal.milestone_amount_changes[0]?.new_amount).toBe(5800);
+    expect(res.computed).toEqual({ oldTotal: 12000, newTotal: 12800, totalDelta: 800 });
+    expect(res.ai).toMatchObject({ source: "in_cloud", model: "gemini-3.5-flash-lite" });
+    expect(getGenerativeModel.mock.calls.at(-1)![1]).toMatchObject({ mode: "prefer_in_cloud" });
+    expect(serverFallback).not.toHaveBeenCalled();
+
+    // Server proposeChangeOrder accepts the browser draft and recomputes against stored terms
+    const svc = new ContractCardService(new MockIssuingGateway(), new MemoryJobStore(), "owner@example.com");
+    let job = await svc.createJob({ kind: "text", text: quoteSample });
+    job = await svc.approveTerms(job.id);
+    job = await svc.proposeChangeOrder(job.id, undefined, { draft: res.draft, aiSource: res.ai });
+    expect(job.pending?.kind).toBe("change_order");
+    expect(job.pending?.aiSource).toEqual(res.ai);
+    expect(job.pending?.change_order?.milestone_amount_changes[0]?.new_amount).toBe(5800);
+
+    // Offline without on-device returns needs-connection and never touches cloud or server
+    stubBrowserEnv({ online: false, lmAvailability: "unavailable" });
+    const offline = await draftChangeOrderInBrowser(quoteTerms, coEmailSample, { serverFallback });
+    expect(offline.status).toBe("needs-connection");
+    expect(serverFallback).not.toHaveBeenCalled();
   });
 });

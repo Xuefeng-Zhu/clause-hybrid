@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { validateChangeOrderDraft } from "../../../shared/clause-ai/validate.js";
 import type { IssuingGateway } from "../airwallex/types.js";
 import { config } from "../config.js";
 import { applyChangeOrder, draftChangeOrder } from "../contract/changeOrder.js";
@@ -570,11 +571,46 @@ export class ContractCardService {
     return await this.store.save(job);
   }
 
-  async proposeChangeOrder(jobId: string, emailText: string): Promise<Job> {
+  async proposeChangeOrder(
+    jobId: string,
+    emailText?: string,
+    browserDraft?: {
+      draft: unknown;
+      aiSource: { source: "on_device" | "in_cloud"; model: string; ms: number };
+    },
+  ): Promise<Job> {
     const job = await this.activeJob(jobId);
-    const co = await draftChangeOrder(job.terms, emailText);
-    job.pending = { approval_id: `appr_${randomUUID().slice(0, 8)}`, kind: "change_order", currency: job.terms.currency, change_order: co, created_at: new Date().toISOString() };
-    log(job, "change_order_drafted", co.summary, co);
+    let co;
+    if (browserDraft) {
+      // Deterministically re-compute milestone new_amount and totals against authoritative job.terms.
+      const validated = validateChangeOrderDraft(
+        browserDraft.draft,
+        job.terms,
+        emailText,
+      );
+      if (!validated.ok || !validated.proposal) {
+        throw new Error(`Invalid change-order draft: ${validated.errors.join(" ")}`);
+      }
+      co = validated.proposal;
+    } else {
+      if (!emailText) {
+        throw new Error("Change-order email text is required.");
+      }
+      co = await draftChangeOrder(job.terms, emailText);
+    }
+
+    job.pending = {
+      approval_id: `appr_${randomUUID().slice(0, 8)}`,
+      kind: "change_order",
+      currency: job.terms.currency,
+      change_order: co,
+      ...(browserDraft?.aiSource ? { aiSource: browserDraft.aiSource } : {}),
+      created_at: new Date().toISOString(),
+    };
+    const suffix = browserDraft?.aiSource
+      ? ` (drafted by ${browserDraft.aiSource.model} (${browserDraft.aiSource.source === "on_device" ? "on-device" : "cloud"}); raw email stayed on device)`
+      : "";
+    log(job, "change_order_drafted", `${co.summary}${suffix}`, co);
     return await this.store.save(job);
   }
 

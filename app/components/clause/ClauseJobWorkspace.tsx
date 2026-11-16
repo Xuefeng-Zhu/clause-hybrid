@@ -52,6 +52,7 @@ import { MilestoneBar } from "./MilestoneBar";
 import { EmptyJobState, NewJobDialog } from "./NewJobDialog";
 import { AiSourceBadge } from "./AiSourceBadge";
 import { looksLikePolicyText } from "../../../shared/clause-ai/prompts.js";
+import { draftChangeOrderInBrowser } from "@/lib/clause-ai/changeOrder";
 import { explainExceptionInBrowser } from "@/lib/clause-ai/exception";
 import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
@@ -239,6 +240,7 @@ export function ClauseJobWorkspace() {
   const [pinnedClauseId, setPinnedClauseId] = useState<string | null>(null);
   const [parseOfflineNotice, setParseOfflineNotice] = useState<string | null>(null);
   const [exceptionOfflineNotice, setExceptionOfflineNotice] = useState<string | null>(null);
+  const [coOfflineNotice, setCoOfflineNotice] = useState<string | null>(null);
   const activeClauseId = hoveredClauseId ?? pinnedClauseId;
 
   useEffect(() => {
@@ -246,6 +248,7 @@ export function ClauseJobWorkspace() {
     const onOnline = () => {
       setParseOfflineNotice(null);
       setExceptionOfflineNotice(null);
+      setCoOfflineNotice(null);
     };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
@@ -618,15 +621,54 @@ export function ClauseJobWorkspace() {
   async function handleDraftChangeOrder() {
     if (!activeJobId) return;
     const trimmed = coEmailText.trim();
+    const usedEmail = trimmed || SAMPLE_CHANGE_ORDER_EMAIL_TEXT;
+    setCoOfflineNotice(null);
     await runExclusive(
       "Reading change-order message…",
-      () =>
-        draftCoMut.mutateAsync(
+      async () => {
+        if (job?.terms) {
+          const drafted = await draftChangeOrderInBrowser(job.terms, usedEmail, {
+            serverFallback: () =>
+              draftCoMut.mutateAsync(
+                trimmed
+                  ? { jobId: activeJobId, emailText: trimmed }
+                  : { jobId: activeJobId, useSample: true },
+              ),
+          });
+          if (drafted.status === "needs-connection") {
+            setCoOfflineNotice(drafted.message);
+            toast.error(drafted.message);
+            return null;
+          }
+          if (drafted.status === "fallback") {
+            if (isFirebaseConfigured()) {
+              toast.message("Browser change-order draft unavailable; drafting on the server.");
+            }
+            return drafted.fallback;
+          }
+          toast.message(formatAiSource(drafted.ai));
+          return draftCoMut.mutateAsync({
+            jobId: activeJobId,
+            draft: drafted.draft,
+            aiSource: drafted.ai,
+          });
+        }
+
+        if (isNavigatorOffline()) {
+          setCoOfflineNotice(NEEDS_CONNECTION_MESSAGE);
+          toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
+
+        return draftCoMut.mutateAsync(
           trimmed
             ? { jobId: activeJobId, emailText: trimmed }
             : { jobId: activeJobId, useSample: true },
-        ),
-      () => {
+        );
+      },
+      (res) => {
+        if (!res) return;
+        setCoOfflineNotice(null);
         toast.success("Change order drafted. Review diff before approving.");
       },
     );
@@ -1237,9 +1279,13 @@ export function ClauseJobWorkspace() {
             coSheetOpen={coSheetOpen}
             onCoSheetOpenChange={setCoSheetOpen}
             coEmailText={coEmailText}
-            onCoEmailTextChange={setCoEmailText}
+            onCoEmailTextChange={(next) => {
+              setCoEmailText(next);
+              if (coOfflineNotice) setCoOfflineNotice(null);
+            }}
             onDraftChangeOrder={() => void handleDraftChangeOrder()}
             onApproveChangeOrder={() => void handleApproveChangeOrder()}
+            coOfflineNotice={coOfflineNotice}
             onRejectPending={() => void handleRejectPending()}
             onOpenExpenseReport={() => setExpenseReportOpen(true)}
           />
