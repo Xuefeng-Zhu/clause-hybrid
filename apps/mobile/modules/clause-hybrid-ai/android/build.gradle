@@ -8,7 +8,7 @@ buildscript {
     // Keep aligned with apps/mobile/app.json -> expo-build-properties -> android.kotlinVersion
     clauseKotlinVersion = rootProject.ext.has("kotlinVersion")
       ? rootProject.ext.get("kotlinVersion")
-      : "2.4.21"
+      : "2.4.20"
     // KSP2 (2.3.x) is decoupled from the Kotlin version; firebase-ai-ondevice beta08 needs Kotlin >= 2.4 metadata
     clauseKspPluginVersion = rootProject.ext.has("kspVersion")
       ? rootProject.ext.get("kspVersion")
