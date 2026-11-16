@@ -47,6 +47,33 @@ export function toModelJsonSchema(schema: z.ZodTypeAny): Record<string, unknown>
   return json;
 }
 
+/**
+ * On-device variant of the JSON schema. Gemini Nano tends to skip optional top-level fields, so
+ * every top-level property becomes required but nullable; nulls are stripped again before zod
+ * validation, so "not in the document" still means "absent". Cloud keeps the plain schema.
+ */
+export function toOnDeviceJsonSchema(json: Record<string, unknown>): Record<string, unknown> {
+  const props = json.properties as Record<string, Record<string, unknown>> | undefined;
+  if (!props) return json;
+  const required = new Set((json.required as string[] | undefined) ?? []);
+  const properties: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props)) {
+    properties[key] = required.has(key) || "default" in value ? value : { anyOf: [value, { type: "null" }] };
+  }
+  return { ...json, properties, required: Object.keys(props) };
+}
+
+/** Drop null values (recursively) so optional fields the model marked "not present" parse as absent. */
+export function stripNulls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNulls);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) if (v !== null) out[k] = stripNulls(v);
+    return out;
+  }
+  return value;
+}
+
 /** Strip a ```json fence if a model wraps its answer in one. */
 export function extractJson(text: string): unknown {
   const trimmed = text.trim();
@@ -78,9 +105,11 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
     },
     onDeviceParams: {
       createOptions: {
+        expectedInputs: [{ type: "text", languages: ["en"] }],
+        expectedOutputs: [{ type: "text", languages: ["en"] }],
         initialPrompts: [{ role: "system", content: [{ type: "text", value: req.system }] }],
       },
-      promptOptions: { responseConstraint: jsonSchema },
+      promptOptions: { responseConstraint: toOnDeviceJsonSchema(jsonSchema) },
     },
   });
 
@@ -95,7 +124,7 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
         ? "on_device"
         : "in_cloud";
 
-  const value = req.schema.parse(extractJson(response.text()));
+  const value = req.schema.parse(stripNulls(extractJson(response.text())));
   return { value, source, model: source === "on_device" ? ON_DEVICE_MODEL_LABEL : cloudModel, ms };
 }
 

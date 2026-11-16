@@ -9,7 +9,9 @@ export const CONTRACT_SYSTEM = `You extract payment terms from a contractor quot
 Rules:
 - Copy each clause_id exactly as written (e.g. "§2.1") and quote the clause text verbatim. Never paraphrase a quote.
 - Milestone ids are "M1", "M2", "M3"... in document order.
-- Amounts in major units as numbers (4,000.00 -> 4000).
+- Amounts in major units as numbers (4,000.00 -> 4000). total_amount is the contract total as written; never add milestones up yourself to get it.
+- One milestone per payment line in the document; do not repeat a milestone.
+- If an optional field (prohibited_spend, start_date, change_order_clause) is not in the document, use null.
 - Dates as YYYY-MM-DD. "deadline.date" is the last day funds may be drawn.
 - allowed_spend.categories: choose only from the enum. If the contract allows something not in the enum, add an open_question instead of guessing.
 - Mark released_on_signing=true only when the text says the milestone is paid at signing / as a deposit.

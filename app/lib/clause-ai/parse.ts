@@ -49,8 +49,19 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
     mode,
   });
   const terms = r.value;
+  renumberDuplicateMilestoneIds(terms);
   terms.open_questions.push(...missingQuotes(contractClauses(terms), text));
   return { kind: "contract", terms, problems: validateTerms(terms), ai: strip(r) };
+}
+
+/**
+ * Milestone ids are labels, not money: if the model repeats one, renumber M1..Mn in document
+ * order. Amounts are never touched; a bad sum stays a validation problem for a human.
+ */
+export function renumberDuplicateMilestoneIds(terms: ContractTerms): void {
+  const ids = terms.milestones.map((m) => m.id);
+  if (new Set(ids).size === ids.length) return;
+  terms.milestones.forEach((m, i) => (m.id = `M${i + 1}`));
 }
 
 function strip<T>(r: HybridResult<T>) {
