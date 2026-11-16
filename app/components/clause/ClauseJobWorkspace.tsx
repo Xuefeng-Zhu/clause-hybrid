@@ -50,6 +50,10 @@ import { EnforcementPanel } from "./EnforcementPanel";
 import { ExpenseReportSheet } from "./ExpenseReportSheet";
 import { MilestoneBar } from "./MilestoneBar";
 import { EmptyJobState, NewJobDialog } from "./NewJobDialog";
+import { AiSourceBadge } from "./AiSourceBadge";
+import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
+import { isFirebaseConfigured } from "@/lib/firebase";
+import { formatAiSource } from "@/lib/hybrid-ai";
 import { SandboxToolsDrawer } from "./SandboxToolsDrawer";
 import { MetalMandatePanel, type MandateStateLite } from "./MetalMandatePanel";
 import { ContractorPhone } from "./ContractorPhone";
@@ -190,6 +194,7 @@ export function ClauseJobWorkspace() {
 
   // Clause actions
   const parseQuoteMut = useActionMutation("parse-quote");
+  const createFromTermsMut = useActionMutation("create-job-from-terms");
   const approveTermsMut = useActionMutation("approve-terms");
   const simulateChargeMut = useActionMutation("simulate-charge");
   const submitProofMut = useActionMutation("submit-proof");
@@ -330,10 +335,28 @@ export function ClauseJobWorkspace() {
     const usedText = trimmed || SAMPLE_QUOTE_TEXT;
     await runExclusive(
       "Reading document…",
-      () =>
-        parseQuoteMut.mutateAsync(
+      async () => {
+        // Clause Private: read the document in the browser (Gemini Nano on-device, cloud Gemini
+        // fallback via Firebase AI Logic) and send only the structured terms to the server.
+        if (isFirebaseConfigured()) {
+          try {
+            const parsed = await parseDocumentInBrowser(usedText);
+            const res = await createFromTermsMut.mutateAsync(
+              parsed.kind === "policy"
+                ? { kind: "policy", policyTerms: parsed.policyTerms, aiSource: parsed.ai }
+                : { kind: "contract", terms: parsed.terms, aiSource: parsed.ai },
+            );
+            toast.message(formatAiSource(parsed.ai));
+            return res;
+          } catch (err) {
+            console.warn("[clause] Browser parse failed; using server parse.", err);
+            toast.message("On-device read unavailable; reading on the server.");
+          }
+        }
+        return parseQuoteMut.mutateAsync(
           trimmed ? { text: trimmed } : { useSample: true },
-        ),
+        );
+      },
       (res) => {
         saveRawQuoteForJob(res.summary.id, usedText);
         setNewJobOpen(false);
@@ -1005,6 +1028,7 @@ export function ClauseJobWorkspace() {
                       ? "Policy & trip parsed"
                       : "Quote parsed"}
                   </span>
+                  {summary.aiSource ? <AiSourceBadge info={summary.aiSource} /> : null}
                   <span aria-hidden="true" className="text-stone-300">
                     /
                   </span>

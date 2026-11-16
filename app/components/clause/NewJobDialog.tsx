@@ -17,7 +17,10 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { SAMPLE_POLICY_TEXT, SAMPLE_QUOTE_TEXT } from "@/lib/clause-samples";
+import { isFirebaseConfigured } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
+
+import { WhatLeavesThisDevice } from "./AiSourceBadge";
 
 interface QuoteIntakeFormProps {
   quoteText: string;
@@ -171,6 +174,7 @@ function QuoteIntakeForm({
           )}
         </Button>
       </div>
+      {isFirebaseConfigured() ? <WhatLeavesThisDevice /> : null}
     </div>
   );
 }

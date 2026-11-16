@@ -246,6 +246,7 @@ export interface JobSummary {
   pending: PendingApproval | null;
   problems: string[];
   parsedBy: string;
+  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number } | null;
   mccNames?: Record<string, string>;
 }
 
