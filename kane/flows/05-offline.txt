@@ -1,0 +1,1 @@
+Manual / CDP check (kane-cli 0.10.4 has no network emulation): set the browser offline with CDP Network.emulateNetworkConditions, then New job → Use sample quote → Read quote. Expected: "Needs a connection. Nothing was sent." and no request leaves the browser.

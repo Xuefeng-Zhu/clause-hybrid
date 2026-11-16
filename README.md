@@ -79,6 +79,10 @@ Clause runs structured extraction and review in the browser via Firebase AI Logi
 - Mock Metal verification reads in-memory state even when the UI says **Verify mandate on chain**. On-chain verification uses Metal testnet. The Airwallex deposit associated with a successful payout is a separate simulation.
 - Frozen cards, closed cards, and insufficient wallet funds can produce declines without a source clause citation.
 
+## Verified with Kane CLI
+
+Every money-touching flow is checked in a real browser by [Kane CLI](https://www.testmuai.com/kane-cli/), and failures feed back to the coding agent. Kane caught two bugs that are now fixed (red → green). See [docs/KANE.md](docs/KANE.md) and `kane/`.
+
 ## How it works
 
 - The model extracts document terms, reviews proof, and drafts change orders and exception requests. Code validates the extracted terms, computes card and payout controls, and maps provider outcomes to clauses when applicable.
