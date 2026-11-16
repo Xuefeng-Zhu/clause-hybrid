@@ -3,10 +3,10 @@ import type { IssuingGateway } from "../airwallex/types.js";
 import { config } from "../config.js";
 import { applyChangeOrder, draftChangeOrder } from "../contract/changeOrder.js";
 import { parseContract, type ContractSource } from "../contract/parser.js";
-import { validateTerms } from "../contract/schema.js";
+import { ContractTerms, validateTerms } from "../contract/schema.js";
 import { computeValidatedExceptionCap, draftPolicyException } from "../expense/exception.js";
 import { looksLikePolicyDocument, parsePolicy } from "../expense/parser.js";
-import { synthesizeContractTermsFromPolicy, validatePolicyTerms } from "../expense/schema.js";
+import { PolicyTerms, synthesizeContractTermsFromPolicy, validatePolicyTerms } from "../expense/schema.js";
 import { MockMetalRail } from "../metal/mock.js";
 import {
   MOCK_WRONG_PAYEE_ADDRESS,
@@ -85,6 +85,54 @@ export class ContractCardService {
       events: [],
     };
     log(job, "terms_parsed", `Parsed ${terms.contract_ref}: ${terms.milestones.length} milestones, ${terms.currency} ${terms.total_amount}`);
+    return await this.store.save(job);
+  }
+
+  /**
+   * Terms already extracted in the browser (Firebase AI Logic hybrid). The raw document never reaches
+   * the server: we re-validate the structured terms here, deterministically, and create a DRAFT job.
+   */
+  async createJobFromTerms(input: {
+    kind: "contract" | "policy";
+    terms?: unknown;
+    policyTerms?: unknown;
+    aiSource: NonNullable<Job["aiSource"]>;
+  }): Promise<Job> {
+    const parsedBy = `${input.aiSource.model} (${input.aiSource.source === "on_device" ? "on-device" : "cloud"})`;
+    if (input.kind === "policy") {
+      const policyTerms = PolicyTerms.parse(input.policyTerms);
+      const job: Job = {
+        id: `job_${randomUUID().slice(0, 8)}`,
+        kind: "policy",
+        status: "draft",
+        terms: synthesizeContractTermsFromPolicy(policyTerms),
+        policyTerms,
+        problems: validatePolicyTerms(policyTerms),
+        parsedBy,
+        aiSource: input.aiSource,
+        releasedMilestoneIds: [],
+        rules: [],
+        transactions: [],
+        events: [],
+      };
+      log(job, "terms_parsed", `Parsed ${policyTerms.policy_ref} ${parsedBy}: budget ${policyTerms.currency} ${policyTerms.budget.amount}, per-charge cap ${policyTerms.currency} ${policyTerms.per_charge_cap.amount}. Raw document stayed on the device.`);
+      return await this.store.save(job);
+    }
+    const terms = ContractTerms.parse(input.terms);
+    const job: Job = {
+      id: `job_${randomUUID().slice(0, 8)}`,
+      kind: "contract",
+      status: "draft",
+      terms,
+      problems: validateTerms(terms),
+      parsedBy,
+      aiSource: input.aiSource,
+      releasedMilestoneIds: [],
+      rules: [],
+      transactions: [],
+      events: [],
+    };
+    log(job, "terms_parsed", `Parsed ${terms.contract_ref} ${parsedBy}: ${terms.milestones.length} milestones, ${terms.currency} ${terms.total_amount}. Raw document stayed on the device.`);
     return await this.store.save(job);
   }
 

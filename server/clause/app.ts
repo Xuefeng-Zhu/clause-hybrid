@@ -116,6 +116,7 @@ export function summarize(job: Job) {
       pending: job.pending ?? null,
       problems: job.problems,
       parsedBy: job.parsedBy,
+    aiSource: job.aiSource ?? null,
       mccNames: DEMO_MCC_NAMES,
     };
   }
@@ -158,6 +159,7 @@ export function summarize(job: Job) {
     pending: job.pending ?? null,
     problems: job.problems,
     parsedBy: job.parsedBy,
+    aiSource: job.aiSource ?? null,
     mccNames: DEMO_MCC_NAMES,
   };
 }

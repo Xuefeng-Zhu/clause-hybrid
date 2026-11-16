@@ -62,6 +62,8 @@ export interface Job {
   activeException?: ActivePolicyException;
   problems: string[];
   parsedBy: string;
+  /** Where the terms were extracted when the browser parsed them (Firebase AI Logic hybrid). The raw document is not stored. */
+  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number };
   cardholder_id?: string;
   card_id?: string;
   releasedMilestoneIds: string[];
