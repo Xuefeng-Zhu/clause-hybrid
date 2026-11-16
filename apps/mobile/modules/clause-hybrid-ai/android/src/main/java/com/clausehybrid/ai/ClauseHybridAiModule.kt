@@ -15,9 +15,9 @@ import com.google.firebase.ai.ondevice.DownloadStatus
 import com.google.firebase.ai.ondevice.FirebaseAIOnDevice
 import com.google.firebase.ai.ondevice.OnDeviceModelStatus
 import com.google.firebase.ai.type.GenerativeBackend
-import com.google.firebase.ai.type.InferenceMode
-import com.google.firebase.ai.type.InferenceSource
-import com.google.firebase.ai.type.OnDeviceConfig
+import com.google.firebase.ai.InferenceMode
+import com.google.firebase.ai.InferenceSource
+import com.google.firebase.ai.OnDeviceConfig
 import com.google.firebase.ai.type.PublicPreviewAPI
 import com.google.firebase.ai.type.QuotaExceededException
 import com.google.firebase.ai.type.content
@@ -229,7 +229,7 @@ class ClauseHybridAiModule : Module() {
             }
             is DownloadStatus.DownloadFailed -> {
               emittedFailure = true
-              val errMsg = status.e.message ?: "On-device model download failed."
+              val errMsg = status.exception.message ?: "On-device model download failed."
               sendEvent(
                 "onDownload",
                 mapOf(
@@ -237,7 +237,7 @@ class ClauseHybridAiModule : Module() {
                   "error" to errMsg,
                 ),
               )
-              throw mapException(status.e)
+              throw mapException(status.exception)
             }
           }
         }
@@ -291,7 +291,8 @@ class ClauseHybridAiModule : Module() {
         val response = model.generateObject(ContractTermsOut.firebaseAISchema(), effectivePrompt)
         val elapsedMs = SystemClock.elapsedRealtime() - startedMs
 
-        val parsed = response.getObject<ContractTermsOut>()
+        val parsed = response.getObject(0)
+          ?: throw CodedException("ERR_EMPTY", "Model returned no structured object.", null)
         val encodedJson = jsonEncoder.encodeToString(ContractTermsOut.serializer(), parsed)
         val source = mapInferenceSource(response.response.inferenceSource, inferenceMode)
         val usedModel = if (source == "on_device") ON_DEVICE_MODEL_ID else effectiveCloudModel
