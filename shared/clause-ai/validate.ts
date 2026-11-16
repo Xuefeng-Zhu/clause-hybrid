@@ -2,6 +2,7 @@
  * Pure validation & normalization helpers shared across browser, mobile (Expo), and server.
  * Zero Node, DOM, or SDK imports.
  */
+import { z } from "zod";
 import type { ClauseRef, ContractTerms } from "../../server/clause/contract/schema.js";
 import { addDaysIso, PolicyTerms, validatePolicyTerms } from "../../server/clause/expense/schema.js";
 import { missingQuotes, policyClauses } from "./prompts.js";
@@ -137,4 +138,160 @@ export function validateExpenseTerms(raw: unknown, sourceText?: string): Expense
   }
 
   return { ok: true, policyTerms: terms, errors: [], problems: [] };
+}
+
+/**
+ * Schema for AI-only exception extraction & explanation.
+ * Note: NO dollar caps or approval fields here — deterministic code calculates all amounts.
+ */
+export const RawModelException = z.object({
+  client: z.string(),
+  attendees: z.number().int().positive(),
+  attendee_names: z.array(z.string()).min(1),
+  requested_cap: z.number().positive().optional(),
+  rationale: z.string(),
+});
+export type RawModelException = z.infer<typeof RawModelException>;
+
+export interface ExceptionProposalValidated {
+  client: string;
+  attendees: number;
+  attendee_names: string[];
+  max_allowed: number;
+  one_time_cap: number;
+  requested_charge?: number;
+  rationale: string;
+  source_note: string;
+  clause: ClauseRef;
+}
+
+export interface ExceptionValidationResult {
+  ok: boolean;
+  extraction?: RawModelException;
+  proposal?: ExceptionProposalValidated;
+  errors: string[];
+}
+
+/**
+ * Pure deterministic cap computation & validation:
+ * - max_allowed = per_attendee_cap * attendees (e.g. 125 * 4 = 500)
+ * - one_time_cap = min(requestedCap, max_allowed), never above 125 * attendees
+ * - requires named client and distinct named attendees matching count
+ */
+export function computeValidatedExceptionCap(input: {
+  client: string;
+  attendees: number;
+  attendee_names: string[];
+  perAttendeeCap: number;
+  requestedCap?: number | undefined;
+}): { max_allowed: number; one_time_cap: number } {
+  if (!input.client.trim()) {
+    throw new Error("Exception request must name the client (§3.4).");
+  }
+  if (!Number.isInteger(input.attendees) || input.attendees < 1) {
+    throw new Error("Attendee count must be a positive integer.");
+  }
+  if (!Number.isFinite(input.perAttendeeCap) || input.perAttendeeCap <= 0) {
+    throw new Error("Policy per-attendee cap must be positive (§3.4).");
+  }
+  const cleanNames = input.attendee_names.map((n) => n.trim()).filter(Boolean);
+  if (cleanNames.length < input.attendees) {
+    throw new Error(
+      `Exception names ${cleanNames.length} attendee(s), fewer than the ${input.attendees} claimed (§3.4).`,
+    );
+  }
+  const uniqueNames = new Set(cleanNames.map((n) => n.toLowerCase()));
+  if (uniqueNames.size < input.attendees) {
+    throw new Error(
+      `Exception names only ${uniqueNames.size} distinct attendee(s), fewer than ${input.attendees} (§3.4).`,
+    );
+  }
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const max_allowed = round2(input.perAttendeeCap * input.attendees);
+  const rawCap =
+    input.requestedCap !== undefined && Number.isFinite(input.requestedCap) && input.requestedCap > 0
+      ? Math.min(input.requestedCap, max_allowed)
+      : max_allowed;
+  const one_time_cap = round2(Math.min(rawCap, max_allowed));
+  if (one_time_cap <= 0 || one_time_cap > max_allowed) {
+    throw new Error(`Computed cap ${one_time_cap} exceeds policy maximum ${max_allowed}.`);
+  }
+  return { max_allowed, one_time_cap };
+}
+
+/**
+ * Deterministic validation of model exception explanation against policy §3.4.
+ * AI only explains & extracts client/attendees; deterministic code computes all caps.
+ */
+export function validateExceptionExtraction(
+  raw: unknown,
+  terms: Pick<PolicyTerms, "exception_clause">,
+  opts: { sourceNote?: string; requestedCharge?: number; requestedCap?: number } = {},
+): ExceptionValidationResult {
+  const rule = terms.exception_clause;
+  if (!rule) {
+    return {
+      ok: false,
+      errors: ["This policy has no client-entertainment exception clause."],
+    };
+  }
+
+  const parsed = RawModelException.safeParse(stripNulls(raw));
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: parsed.error.issues.map((i) => `${i.path.join(".") || "root"}: ${i.message}`),
+    };
+  }
+
+  const data = parsed.data;
+  const cleanClient = data.client.trim();
+  const cleanRationale = data.rationale.trim();
+  const cleanNames = data.attendee_names.map((n) => n.trim()).filter(Boolean);
+  const errors: string[] = [];
+
+  if (!cleanClient) errors.push("Exception request must name the client (§3.4).");
+  if (!cleanRationale) errors.push("Exception explanation rationale is required.");
+
+  let caps: { max_allowed: number; one_time_cap: number } | undefined;
+  try {
+    caps = computeValidatedExceptionCap({
+      client: cleanClient,
+      attendees: data.attendees,
+      attendee_names: cleanNames,
+      perAttendeeCap: rule.per_attendee_cap,
+      requestedCap: opts.requestedCap ?? data.requested_cap,
+    });
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : "Invalid exception cap.");
+  }
+
+  if (errors.length > 0 || !caps) {
+    return { ok: false, errors };
+  }
+
+  const extraction: RawModelException = {
+    client: cleanClient,
+    attendees: data.attendees,
+    attendee_names: cleanNames,
+    ...(data.requested_cap !== undefined ? { requested_cap: data.requested_cap } : {}),
+    rationale: cleanRationale,
+  };
+
+  return {
+    ok: true,
+    extraction,
+    proposal: {
+      client: cleanClient,
+      attendees: data.attendees,
+      attendee_names: cleanNames,
+      max_allowed: caps.max_allowed,
+      one_time_cap: caps.one_time_cap,
+      ...(opts.requestedCharge !== undefined ? { requested_charge: opts.requestedCharge } : {}),
+      rationale: cleanRationale,
+      source_note: (opts.sourceNote ?? "").trim(),
+      clause: rule.clause,
+    },
+    errors: [],
+  };
 }

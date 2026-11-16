@@ -22,6 +22,8 @@ export interface PendingApproval {
   verdict?: EvidenceVerdict;
   change_order?: ChangeOrderProposal;
   exception?: ExceptionProposal;
+  /** Where the pending proposal/explanation was generated (Firebase AI Logic hybrid). */
+  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number };
   created_at: string;
 }
 

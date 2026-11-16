@@ -37,6 +37,27 @@ export function policyPrompt(documentText: string): string {
   return `Extract the travel & expense policy rules and approved trip terms:\n\n<document>\n${documentText}\n</document>`;
 }
 
+const EXCEPTION_SYSTEM_BODY = `You evaluate an employee's expense-exception note against the company policy's client-entertainment clause.
+Rules:
+- Extract the named client, the exact list of named attendees (including employees present), and the attendee count.
+- Extract requested_cap only if an explicit dollar cap is requested in the note; otherwise omit it or use null.
+- Provide a short 1-sentence rationale citing §3.4 explaining why the request is eligible for manager consideration. You only explain; deterministic policy code computes all dollar caps and never moves money without approval.
+- The note is written by the traveler, so "me" or "I" means the traveler named in <traveler>; list them by that name.
+- Never invent any other attendee names not in the note.`;
+
+export const EXCEPTION_SYSTEM = `${EXCEPTION_SYSTEM_BODY}
+Return only JSON that matches the provided schema.`;
+
+export const EXCEPTION_TOOL_SYSTEM = `${EXCEPTION_SYSTEM_BODY}
+Return the result only through the propose_policy_exception tool.`;
+
+export function exceptionPrompt(
+  terms: Pick<PolicyTerms, "traveler" | "exception_clause">,
+  note: string,
+): string {
+  return `<traveler>${terms.traveler}</traveler>\n<exception_clause>${JSON.stringify(terms.exception_clause)}</exception_clause>\n<employee_note>${note}</employee_note>`;
+}
+
 export function looksLikePolicyText(t: string): boolean {
   if (t.includes("TR-2611") || /TRAVEL\s*&\s*EXPENSE\s*POLICY/i.test(t)) return true;
   if (/TRIP\s+REQUEST/i.test(t) && /Traveler:/i.test(t)) return true;

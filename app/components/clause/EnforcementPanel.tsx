@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+import { AiSourceBadge } from "./AiSourceBadge";
 import { CardMini } from "./CardMini";
 import { TransactionFeedItem } from "./TransactionFeedItem";
 import {
@@ -319,6 +320,12 @@ export function EnforcementPanel({
           <p className="text-xs leading-relaxed text-stone-600">
             {pendingException.rationale}
           </p>
+
+          {pending?.aiSource ? (
+            <div className="flex items-center">
+              <AiSourceBadge info={pending.aiSource} />
+            </div>
+          ) : null}
 
           <div className="rounded-lg border border-[#ECE6DA] bg-[#FAF8F3] px-3 py-2 text-[11px] text-stone-700">
             <div>

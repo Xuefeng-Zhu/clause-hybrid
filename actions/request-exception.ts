@@ -21,18 +21,40 @@ export default defineAction({
       .positive()
       .optional()
       .describe("Optional requested one-time cap; deterministically clamped to 125 × attendees"),
+    extraction: z
+      .object({
+        client: z.string(),
+        attendees: z.number().int().positive(),
+        attendee_names: z.array(z.string()).min(1),
+        requested_cap: z.number().positive().optional(),
+        rationale: z.string(),
+      })
+      .optional()
+      .describe("Optional client-entertainment explanation extracted in browser by Firebase AI Logic; server still computes caps deterministically"),
+    aiSource: z
+      .object({
+        source: z.enum(["on_device", "in_cloud"]),
+        model: z.string().min(1).max(80),
+        ms: z.number().int().nonnegative(),
+      })
+      .optional(),
   }),
-  run: async ({ jobId, note, useSample, requestedCap }) => {
+  run: async ({ jobId, note, useSample, requestedCap, extraction, aiSource }) => {
     const text = useSample || !note ? SAMPLES.exceptionNote : note;
     const job = await (await getService()).requestException(
       jobId,
       text,
-      requestedCap !== undefined ? { requestedCap } : {},
+      {
+        ...(requestedCap !== undefined ? { requestedCap } : {}),
+        ...(extraction ? { extraction } : {}),
+        ...(aiSource ? { aiSource } : {}),
+      },
     );
     return {
       summary: summarize(job),
       pending: job.pending ?? null,
       proposal: job.pending?.exception ?? null,
+      aiSource: job.pending?.aiSource ?? null,
     };
   },
 });

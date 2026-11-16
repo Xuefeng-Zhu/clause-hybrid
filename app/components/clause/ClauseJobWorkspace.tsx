@@ -52,6 +52,7 @@ import { MilestoneBar } from "./MilestoneBar";
 import { EmptyJobState, NewJobDialog } from "./NewJobDialog";
 import { AiSourceBadge } from "./AiSourceBadge";
 import { looksLikePolicyText } from "../../../shared/clause-ai/prompts.js";
+import { explainExceptionInBrowser } from "@/lib/clause-ai/exception";
 import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
 import { isFirebaseConfigured } from "@/lib/firebase";
@@ -617,14 +618,51 @@ export function ClauseJobWorkspace() {
   async function handleRequestException() {
     if (!activeJobId) return;
     const trimmed = exceptionNote.trim();
+    const usedNote = trimmed || SAMPLE_EXCEPTION_NOTE_TEXT;
+    const lastDeclined = job?.policyTerms
+      ? [...job.transactions]
+          .reverse()
+          .find(
+            (t) =>
+              t.failure_reason === "LIMIT_EXCEEDED" &&
+              t.amount > job.policyTerms!.per_charge_cap.amount,
+          )
+      : undefined;
+
     await runExclusive(
       "Evaluating §3.4 exception…",
-      () =>
-        requestExceptionMut.mutateAsync(
+      async () => {
+        if (job?.policyTerms) {
+          const explained = await explainExceptionInBrowser(job.policyTerms, usedNote, {
+            ...(lastDeclined ? { requestedCharge: lastDeclined.amount } : {}),
+            serverFallback: () =>
+              requestExceptionMut.mutateAsync(
+                trimmed
+                  ? { jobId: activeJobId, note: trimmed }
+                  : { jobId: activeJobId, useSample: true },
+              ),
+          });
+          if (explained.status === "fallback") {
+            if (isFirebaseConfigured()) {
+              toast.message("On-device explanation unavailable; evaluating on the server.");
+            }
+            return explained.fallback;
+          }
+          toast.message(formatAiSource(explained.ai));
+          return requestExceptionMut.mutateAsync({
+            jobId: activeJobId,
+            note: usedNote,
+            extraction: explained.extraction,
+            aiSource: explained.ai,
+          });
+        }
+
+        return requestExceptionMut.mutateAsync(
           trimmed
             ? { jobId: activeJobId, note: trimmed }
             : { jobId: activeJobId, useSample: true },
-        ),
+        );
+      },
       (res) => {
         const cap = res.proposal?.one_time_cap;
         toast.success(

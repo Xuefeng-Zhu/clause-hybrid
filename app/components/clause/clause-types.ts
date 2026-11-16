@@ -165,6 +165,7 @@ export interface PendingApproval {
   verdict?: EvidenceVerdict;
   change_order?: ChangeOrderProposal;
   exception?: ExceptionProposal;
+  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number };
   created_at: string;
 }
 

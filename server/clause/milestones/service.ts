@@ -4,7 +4,7 @@ import { config } from "../config.js";
 import { applyChangeOrder, draftChangeOrder } from "../contract/changeOrder.js";
 import { parseContract, type ContractSource } from "../contract/parser.js";
 import { ContractTerms, validateTerms } from "../contract/schema.js";
-import { computeValidatedExceptionCap, draftPolicyException } from "../expense/exception.js";
+import { computeValidatedExceptionCap, draftPolicyException, type RawModelException } from "../expense/exception.js";
 import { looksLikePolicyDocument, parsePolicy } from "../expense/parser.js";
 import { PolicyTerms, synthesizeContractTermsFromPolicy, validatePolicyTerms } from "../expense/schema.js";
 import { MockMetalRail } from "../metal/mock.js";
@@ -298,7 +298,11 @@ export class ContractCardService {
   async requestException(
     jobId: string,
     note: string,
-    opts: { requestedCap?: number } = {},
+    opts: {
+      requestedCap?: number;
+      extraction?: RawModelException;
+      aiSource?: NonNullable<Job["aiSource"]>;
+    } = {},
   ): Promise<Job> {
     const job = await this.activeJob(jobId);
     if (job.kind !== "policy" || !job.policyTerms) {
@@ -311,6 +315,7 @@ export class ContractCardService {
     const proposal = await draftPolicyException(job.policyTerms, note, {
       ...(lastDeclined ? { requestedCharge: lastDeclined.amount } : {}),
       ...(opts.requestedCap !== undefined ? { requestedCap: opts.requestedCap } : {}),
+      ...(opts.extraction ? { extraction: opts.extraction } : {}),
     });
 
     job.pending = {
@@ -319,12 +324,16 @@ export class ContractCardService {
       amount: proposal.one_time_cap,
       currency: job.policyTerms.currency,
       exception: proposal,
+      ...(opts.aiSource ? { aiSource: opts.aiSource } : {}),
       created_at: new Date().toISOString(),
     };
+    const via = opts.aiSource
+      ? ` via ${opts.aiSource.model} (${opts.aiSource.source === "on_device" ? "on-device" : "cloud"})`
+      : "";
     log(
       job,
       "exception_requested",
-      `Exception requested (${proposal.clause.clause_id}): ${proposal.client}, ${proposal.attendees} attendees, cap ${job.policyTerms.currency} ${proposal.one_time_cap}`,
+      `Exception requested (${proposal.clause.clause_id})${via}: ${proposal.client}, ${proposal.attendees} attendees, cap ${job.policyTerms.currency} ${proposal.one_time_cap}`,
       proposal,
     );
     return await this.store.save(job);
