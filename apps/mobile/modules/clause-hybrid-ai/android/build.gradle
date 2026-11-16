@@ -1,0 +1,62 @@
+// ============================================================================
+// ClauseHybridAi Android build configuration
+// Version variables are grouped at the top so they are easy to adjust at build
+// time if the host Expo / Kotlin / AGP toolchain changes.
+// ============================================================================
+buildscript {
+  ext {
+    // Keep aligned with apps/mobile/app.json -> expo-build-properties -> android.kotlinVersion
+    clauseKotlinVersion = rootProject.ext.has("kotlinVersion")
+      ? rootProject.ext.get("kotlinVersion")
+      : "2.1.20"
+    // KSP plugin version must match clauseKotlinVersion (2.1.20-2.0.1 targets Kotlin 2.1.20)
+    clauseKspPluginVersion = rootProject.ext.has("kspVersion")
+      ? rootProject.ext.get("kspVersion")
+      : "2.1.20-2.0.1"
+  }
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath("com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin:${clauseKspPluginVersion}")
+    classpath("org.jetbrains.kotlin:kotlin-serialization:${clauseKotlinVersion}")
+  }
+}
+
+// Firebase AI Logic Hybrid & serialization versions (Firebase docs Nov 2026)
+def firebaseAiVersion = "18.2.0"
+def firebaseAiOndeviceVersion = "16.0.0-beta08"
+def firebaseAppCheckDebugVersion = "20.1.0"
+def firebaseAiKspProcessorVersion = "17.0.0"
+// kotlinx-serialization-json 1.8.1 matches Kotlin 2.1.x
+def kotlinxSerializationJsonVersion = "1.8.1"
+
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "expo-module-gradle-plugin"
+apply plugin: "com.google.devtools.ksp"
+apply plugin: "org.jetbrains.kotlin.plugin.serialization"
+
+group = "com.clausehybrid.ai"
+version = "0.1.0"
+
+android {
+  namespace "com.clausehybrid.ai"
+
+  defaultConfig {
+    minSdk 26
+  }
+
+  buildFeatures {
+    buildConfig true
+  }
+}
+
+dependencies {
+  implementation("com.google.firebase:firebase-ai:${firebaseAiVersion}")
+  implementation("com.google.firebase:firebase-ai-ondevice:${firebaseAiOndeviceVersion}")
+  implementation("com.google.firebase:firebase-appcheck-debug:${firebaseAppCheckDebugVersion}")
+  ksp("com.google.firebase:firebase-ai-ksp-processor:${firebaseAiKspProcessorVersion}")
+  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:${kotlinxSerializationJsonVersion}")
+}

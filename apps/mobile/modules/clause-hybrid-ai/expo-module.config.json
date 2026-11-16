@@ -1,0 +1,12 @@
+{
+  "platforms": ["android", "ios"],
+  "android": {
+    "modules": ["com.clausehybrid.ai.ClauseHybridAiModule"]
+  },
+  "apple": {
+    "modules": ["ClauseHybridAiModule"]
+  },
+  "ios": {
+    "modules": ["ClauseHybridAiModule"]
+  }
+}
