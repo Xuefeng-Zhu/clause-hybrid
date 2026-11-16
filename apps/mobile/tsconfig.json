@@ -1,6 +1,22 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
-  }
+    "strict": true,
+    "paths": {
+      "zod": ["./node_modules/zod"],
+      "zod/*": ["./node_modules/zod/*"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../../shared/clause-ai/prompts.ts",
+    "../../shared/clause-ai/validate.ts",
+    "../../server/clause/contract/schema.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "android",
+    "ios"
+  ]
 }
