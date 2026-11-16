@@ -10,11 +10,16 @@ import { getGenerativeModel, InferenceMode, type AI } from "firebase/ai";
 import { z } from "zod";
 
 import { stripNulls } from "../../shared/clause-ai/validate.js";
-import { getDefaultCloudModel, getFirebaseAI, getRemoteConfigString } from "./firebase";
+import {
+  type AiStep,
+  getDefaultCloudModel,
+  getFirebaseAI,
+  getRemoteConfigStepMode,
+  getRemoteConfigString,
+  type HybridMode,
+} from "./firebase";
 
-export { stripNulls };
-
-export type HybridMode = "prefer_on_device" | "only_on_device" | "prefer_in_cloud" | "only_in_cloud";
+export { stripNulls, type AiStep, type HybridMode };
 export type AiSource = "on_device" | "in_cloud";
 
 export interface HybridResult<T> {
@@ -28,6 +33,7 @@ export interface HybridRequest<S extends z.ZodTypeAny> {
   system: string;
   prompt: string;
   schema: S;
+  step?: AiStep;
   mode?: HybridMode;
   cloudModel?: string;
   /** Injected in tests. */
@@ -100,7 +106,11 @@ function now(): number {
 export async function hybridGenerate<S extends z.ZodTypeAny>(
   req: HybridRequest<S>,
 ): Promise<HybridResult<z.infer<S>>> {
-  const mode = req.mode ?? (getRemoteConfigString("parse_mode", "prefer_on_device") as HybridMode);
+  const mode =
+    req.mode ??
+    (req.step
+      ? getRemoteConfigStepMode(req.step)
+      : (getRemoteConfigString("parse_mode", "prefer_on_device") as HybridMode));
   const cloudModel = req.cloudModel ?? getRemoteConfigString("cloud_model", getDefaultCloudModel());
   const jsonSchema = toModelJsonSchema(req.schema);
   const ai = req.ai ?? getFirebaseAI();

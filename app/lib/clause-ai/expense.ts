@@ -9,7 +9,11 @@ import type { AI } from "firebase/ai";
 import { PolicyTerms } from "../../../server/clause/expense/schema.js";
 import { POLICY_SYSTEM, policyPrompt } from "../../../shared/clause-ai/prompts.js";
 import { validateExpenseTerms } from "../../../shared/clause-ai/validate.js";
-import { getRemoteConfigThreshold, isFirebaseConfigured } from "../firebase";
+import {
+  getRemoteConfigStepMode,
+  getRemoteConfigThreshold,
+  isFirebaseConfigured,
+} from "../firebase";
 import {
   type AiSource,
   hybridGenerate,
@@ -47,8 +51,10 @@ export type ParseExpenseResult<TFallback = unknown> =
 export function chooseExpenseMode(
   text: string,
   threshold = getRemoteConfigThreshold(),
+  configuredMode = getRemoteConfigStepMode("expense"),
 ): HybridMode {
-  return text.length > threshold ? "prefer_in_cloud" : "prefer_on_device";
+  if (configuredMode !== "prefer_on_device") return configuredMode;
+  return text.length > threshold ? "prefer_in_cloud" : configuredMode;
 }
 
 export async function parseExpenseInBrowser<TFallback = unknown>(
@@ -72,6 +78,7 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
       system: POLICY_SYSTEM,
       prompt: policyPrompt(text),
       schema: PolicyTerms,
+      step: "expense",
       mode,
       ...(opts.ai ? { ai: opts.ai } : {}),
     });

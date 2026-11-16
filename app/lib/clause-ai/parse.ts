@@ -12,7 +12,7 @@ import {
   missingQuotes,
 } from "../../../shared/clause-ai/prompts.js";
 import { renumberDuplicateMilestoneIds } from "../../../shared/clause-ai/validate.js";
-import { getRemoteConfigThreshold } from "../firebase";
+import { getRemoteConfigStepMode, getRemoteConfigThreshold } from "../firebase";
 import { hybridGenerate, type HybridMode, type HybridResult } from "../hybrid-ai";
 import { parseExpenseInBrowser } from "./expense";
 
@@ -22,15 +22,18 @@ export type ClientParse =
   | { kind: "contract"; terms: ContractTerms; problems: string[]; ai: Omit<HybridResult<unknown>, "value"> }
   | { kind: "policy"; policyTerms: PolicyTerms; problems: string[]; ai: Omit<HybridResult<unknown>, "value"> };
 
-export function chooseMode(text: string, threshold = getRemoteConfigThreshold()): HybridMode {
-  return text.length > threshold ? "prefer_in_cloud" : "prefer_on_device";
+export function chooseMode(
+  text: string,
+  threshold = getRemoteConfigThreshold(),
+  configuredMode = getRemoteConfigStepMode("contract"),
+): HybridMode {
+  if (configuredMode !== "prefer_on_device") return configuredMode;
+  return text.length > threshold ? "prefer_in_cloud" : configuredMode;
 }
 
 export async function parseDocumentInBrowser(text: string, opts: { mode?: HybridMode } = {}): Promise<ClientParse> {
-  const mode = opts.mode ?? chooseMode(text);
-
   if (looksLikePolicyText(text)) {
-    const res = await parseExpenseInBrowser(text, { mode });
+    const res = await parseExpenseInBrowser(text, opts.mode ? { mode: opts.mode } : {});
     if (res.status !== "ok") {
       throw new Error(res.reason);
     }
@@ -42,10 +45,13 @@ export async function parseDocumentInBrowser(text: string, opts: { mode?: Hybrid
     };
   }
 
+  const mode = opts.mode ?? chooseMode(text);
+
   const r = await hybridGenerate({
     system: CONTRACT_SYSTEM,
     prompt: `Extract the contract terms from this quote / thread:\n\n<document>\n${text}\n</document>`,
     schema: ContractTerms,
+    step: "contract",
     mode,
   });
   const terms = r.value;

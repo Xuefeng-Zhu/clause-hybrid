@@ -17,6 +17,33 @@ import {
 export const DEFAULT_CLOUD_MODEL = "gemini-3.5-flash-lite";
 export const DEFAULT_CLOUD_CHAR_THRESHOLD = 6000;
 
+export type HybridMode = "prefer_on_device" | "only_on_device" | "prefer_in_cloud" | "only_in_cloud";
+export type AiStep = "contract" | "expense" | "exception" | "changeOrder" | "evidence";
+
+export const STEP_MODE_KEYS: Record<AiStep, string> = {
+  contract: "contract_mode",
+  expense: "expense_mode",
+  exception: "exception_mode",
+  changeOrder: "changeOrder_mode",
+  evidence: "evidence_mode",
+};
+
+/** In-code per-step default inference modes kept active offline or before Remote Config loads. */
+export const DEFAULT_STEP_MODES: Record<AiStep, HybridMode> = {
+  contract: "prefer_on_device",
+  expense: "prefer_on_device",
+  exception: "prefer_on_device",
+  changeOrder: "prefer_in_cloud",
+  evidence: "prefer_in_cloud",
+};
+
+const VALID_HYBRID_MODES = new Set<HybridMode>([
+  "prefer_on_device",
+  "only_on_device",
+  "prefer_in_cloud",
+  "only_in_cloud",
+]);
+
 export interface FirebaseClientServices {
   app: FirebaseApp;
   ai: AI;
@@ -121,7 +148,12 @@ export function getFirebaseServices(): FirebaseClientServices {
     remoteConfig.defaultConfig = {
       parse_cloud_char_threshold: DEFAULT_CLOUD_CHAR_THRESHOLD,
       cloud_model: getDefaultCloudModel(),
-      parse_mode: "prefer_on_device",
+      parse_mode: DEFAULT_STEP_MODES.contract,
+      [STEP_MODE_KEYS.contract]: DEFAULT_STEP_MODES.contract,
+      [STEP_MODE_KEYS.expense]: DEFAULT_STEP_MODES.expense,
+      [STEP_MODE_KEYS.exception]: DEFAULT_STEP_MODES.exception,
+      [STEP_MODE_KEYS.changeOrder]: DEFAULT_STEP_MODES.changeOrder,
+      [STEP_MODE_KEYS.evidence]: DEFAULT_STEP_MODES.evidence,
     };
     void fetchAndActivate(remoteConfig).catch(() => {
       // Offline or unconfigured Remote Config falls back to defaultConfig seamlessly.
@@ -165,6 +197,23 @@ export function getRemoteConfigString(key: string, fallback: string): string {
   } catch {
     return fallback;
   }
+}
+
+export function getRemoteConfigStepMode(
+  step: AiStep,
+  fallback: HybridMode = DEFAULT_STEP_MODES[step],
+): HybridMode {
+  const raw = getRemoteConfigString(STEP_MODE_KEYS[step], fallback);
+  if (VALID_HYBRID_MODES.has(raw as HybridMode)) {
+    return raw as HybridMode;
+  }
+  if (step === "contract") {
+    const legacy = getRemoteConfigString("parse_mode", fallback);
+    if (VALID_HYBRID_MODES.has(legacy as HybridMode)) {
+      return legacy as HybridMode;
+    }
+  }
+  return fallback;
 }
 
 /** Reset cached client singletons (for unit tests). */

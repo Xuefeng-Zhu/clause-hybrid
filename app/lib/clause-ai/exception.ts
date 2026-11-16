@@ -13,7 +13,7 @@ import {
   RawModelException,
   validateExceptionExtraction,
 } from "../../../shared/clause-ai/validate.js";
-import { isFirebaseConfigured } from "../firebase";
+import { getRemoteConfigStepMode, isFirebaseConfigured } from "../firebase";
 import {
   type AiSource,
   hybridGenerate,
@@ -51,12 +51,16 @@ export type ExplainExceptionResult<TFallback = unknown> =
 
 export type ExceptionPolicyContext = Pick<PolicyTerms, "traveler" | "exception_clause">;
 
+export function chooseExceptionMode(): HybridMode {
+  return getRemoteConfigStepMode("exception");
+}
+
 export async function explainExceptionInBrowser<TFallback = unknown>(
   terms: ExceptionPolicyContext,
   note: string,
   opts: ExplainExceptionOptions<TFallback> = {},
 ): Promise<ExplainExceptionResult<TFallback>> {
-  const mode = opts.mode ?? "prefer_on_device";
+  const mode = opts.mode ?? chooseExceptionMode();
   const trimmed = note.trim();
 
   const runFallback = async (reason: string): Promise<ExplainExceptionResult<TFallback>> => {
@@ -81,6 +85,7 @@ export async function explainExceptionInBrowser<TFallback = unknown>(
       system: EXCEPTION_SYSTEM,
       prompt: exceptionPrompt(terms, trimmed),
       schema: RawModelException,
+      step: "exception",
       mode,
       ...(opts.ai ? { ai: opts.ai } : {}),
     });

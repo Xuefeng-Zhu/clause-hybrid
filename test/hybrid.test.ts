@@ -25,6 +25,22 @@ vi.mock("../app/lib/firebase", () => ({
   getDefaultCloudModel: () => "gemini-3.5-flash-lite",
   getRemoteConfigString: (_k: string, fallback: string) => fallback,
   getRemoteConfigThreshold: () => 6000,
+  getRemoteConfigStepMode: (step: string) =>
+    step === "changeOrder" || step === "evidence" ? "prefer_in_cloud" : "prefer_on_device",
+  DEFAULT_STEP_MODES: {
+    contract: "prefer_on_device",
+    expense: "prefer_on_device",
+    exception: "prefer_on_device",
+    changeOrder: "prefer_in_cloud",
+    evidence: "prefer_in_cloud",
+  },
+  STEP_MODE_KEYS: {
+    contract: "contract_mode",
+    expense: "expense_mode",
+    exception: "exception_mode",
+    changeOrder: "changeOrder_mode",
+    evidence: "evidence_mode",
+  },
 }));
 
 const { hybridGenerate, extractJson, formatAiSource } = await import("../app/lib/hybrid-ai.js");
