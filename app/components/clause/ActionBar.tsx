@@ -721,7 +721,7 @@ export function ActionBar({
                     onApproveRelease();
                     onProofSheetOpenChange(false);
                   }}
-                  className="bg-[#0F7B55] text-xs font-semibold tabular-nums text-white hover:bg-[#0C6646]"
+                  className="h-auto min-h-9 min-w-0 shrink whitespace-normal bg-[#0F7B55] py-2 text-center text-xs font-semibold leading-snug tabular-nums text-white hover:bg-[#0C6646]"
                 >
                   {approveReleaseLabel}
                 </Button>
@@ -918,7 +918,7 @@ export function ActionBar({
                     onApproveChangeOrder();
                     onCoSheetOpenChange(false);
                   }}
-                  className="bg-[#0F7B55] text-xs font-semibold tabular-nums text-white hover:bg-[#0C6646]"
+                  className="h-auto min-h-9 min-w-0 shrink whitespace-normal bg-[#0F7B55] py-2 text-center text-xs font-semibold leading-snug tabular-nums text-white hover:bg-[#0C6646]"
                 >
                   {approveCoLabel}
                 </Button>
