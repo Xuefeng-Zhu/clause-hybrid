@@ -5,7 +5,7 @@
 #   deploy/deploy-preview.sh channel  -> Firebase Hosting preview channel "kane" (7d)
 # Reads client VITE_* values from .env.local at deploy time; VITE_APPCHECK_DEBUG_TOKEN is never sent.
 set -euo pipefail
-PROJECT=${PROJECT:-firebaselogic26nyc-2309}
+PROJECT=${PROJECT:-fbailogic26vrt-3071}
 REGION=${REGION:-us-west1}
 SERVICE=${SERVICE:-clause-hybrid-preview}
 REPO=${REPO:-clause-preview}
