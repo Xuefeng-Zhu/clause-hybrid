@@ -40,8 +40,10 @@ jobs:
           cache-dependency-path: apps/mobile/package-lock.json
 
       - name: Toolchain
+        # Firebase Test Lab runs iOS tests with Xcode 26.2, so build with the same version.
         run: |
           ls -d /Applications/Xcode*.app || true
+          sudo xcode-select -s /Applications/Xcode_26.2.app
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           pod --version
