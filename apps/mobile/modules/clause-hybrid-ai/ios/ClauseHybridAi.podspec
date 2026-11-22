@@ -1,7 +1,7 @@
 Pod::Spec.new do |s|
   s.name           = 'ClauseHybridAi'
   s.version        = '0.1.0'
-  s.summary        = 'Clause Hybrid AI native module (Android Firebase AI Logic; iOS stub)'
+  s.summary        = 'Clause Hybrid AI native module (Firebase AI Logic cloud + on-device Gemini Nano / Apple Foundation Models)'
   s.description    = 'Local Expo module bridging Firebase AI Logic hybrid on-device + cloud inference.'
   s.author         = 'Clause'
   s.homepage       = 'https://github.com/clause/clause-hybrid'
@@ -11,6 +11,11 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  s.dependency 'FirebaseCore', '~> 13.3'
+  s.dependency 'FirebaseAppCheck', '~> 13.3'
+  s.dependency 'FirebaseAILogic', '~> 13.3'
+  # Apple Foundation Models ships with iOS 26; weak-link so the app still launches on older iOS.
+  s.weak_frameworks = 'FoundationModels'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

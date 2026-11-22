@@ -1,0 +1,109 @@
+name: iOS build (unsigned, for device farms)
+
+# Builds the Expo app in apps/mobile for real iPhones without an Apple developer
+# account: Release config (JS bundled), CODE_SIGNING_ALLOWED=NO, then ad-hoc signed.
+# Firebase Test Lab re-signs apps with its own profile. Outputs:
+#   - ios-xctest.zip  (Release-iphoneos + .xctestrun, for `gcloud firebase test ios run --test`)
+#   - ClausePrivate.ipa (for Robo)
+# GoogleService-Info.plist and the App Check debug token are NOT part of this build;
+# the test harness injects them into the built app (see apps/mobile/ios-testing/).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "shared/**"
+      - "server/clause/contract/**"
+      - "server/clause/expense/**"
+      - ".github/workflows/ios-build.yml"
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 80
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Toolchain
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          pod --version
+          ruby -v
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Expo prebuild (iOS)
+        run: npx expo prebuild -p ios --no-install --clean
+
+      - name: Add UI test target
+        run: |
+          gem list -i xcodeproj >/dev/null || sudo gem install xcodeproj
+          PROJ=$(ls -d ios/*.xcodeproj | head -1)
+          APP=$(basename "$PROJ" .xcodeproj)
+          echo "APP_NAME=$APP" >> "$GITHUB_ENV"
+          ruby ios-testing/add_uitest_target.rb "$PROJ" "$APP"
+
+      - name: Pod install
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Build for testing (iphoneos, unsigned, Release)
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -workspace "ios/$APP_NAME.xcworkspace" \
+            -scheme "$APP_NAME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: .*ClauseHybridAi|\*\* (BUILD|TEST BUILD)" || true
+          test -d "build/dd/Build/Products/Release-iphoneos/$APP_NAME.app"
+
+      - name: Ad-hoc sign and package
+        run: |
+          cd build/dd/Build/Products
+          for app in Release-iphoneos/*.app; do
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --verbose "$app"
+          done
+          ls -la Release-iphoneos
+          ls *.xctestrun
+          zip -qry "$GITHUB_WORKSPACE/ios-xctest.zip" Release-iphoneos *.xctestrun
+          mkdir -p Payload && cp -R "Release-iphoneos/$APP_NAME.app" Payload/
+          zip -qry "$GITHUB_WORKSPACE/$APP_NAME.ipa" Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-testlab
+          path: |
+            ios-xctest.zip
+            *.ipa
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-build-log
+          path: apps/mobile/build/xcodebuild.log
+          retention-days: 7

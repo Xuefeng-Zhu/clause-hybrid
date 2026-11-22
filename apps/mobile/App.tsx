@@ -263,7 +263,8 @@ export default function App() {
               />
               <View style={styles.statusTextWrap}>
                 <Text style={styles.statusLabel}>
-                  {modelStatus === "available" && "On-device model: Available (Gemini Nano)"}
+                  {modelStatus === "available" &&
+                    `On-device model: Available (${Platform.OS === "ios" ? "Apple Foundation Models" : "Gemini Nano"})`}
                   {modelStatus === "downloadable" && "On-device model: Downloadable"}
                   {modelStatus === "downloading" &&
                     `Downloading Gemini Nano${downloadProgressText ? ` · ${downloadProgressText}` : "…"}`}

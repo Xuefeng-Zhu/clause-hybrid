@@ -120,7 +120,12 @@ export function formatAiBadge(ai: AiRunMetadata): string {
   const duration =
     ai.ms >= 1000 ? `${(ai.ms / 1000).toFixed(1)} s` : `${Math.round(ai.ms)} ms`;
   if (ai.source === "on_device") {
-    const label = ai.model === "gemini-nano" ? "Gemini Nano" : ai.model;
+    const label =
+      ai.model === "gemini-nano"
+        ? "Gemini Nano"
+        : ai.model === "apple-foundation-models"
+          ? "Apple Foundation Models"
+          : ai.model;
     return `On-device · ${label} · ${duration}`;
   }
   return `Cloud · ${ai.model} · ${duration}`;
