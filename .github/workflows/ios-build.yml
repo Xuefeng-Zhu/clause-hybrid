@@ -40,10 +40,10 @@ jobs:
           cache-dependency-path: apps/mobile/package-lock.json
 
       - name: Toolchain
-        # Firebase Test Lab runs iOS tests with Xcode 26.2, so build with the same version.
+        # Default Xcode (26.6). Expo SDK 58's ExpoModulesJSI does not compile with Xcode 26.2
+        # (Swift 6.2 data-race errors); a 26.6 build runs fine under Test Lab's Xcode 26.2.
         run: |
           ls -d /Applications/Xcode*.app || true
-          sudo xcode-select -s /Applications/Xcode_26.2.app
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           pod --version
@@ -69,7 +69,7 @@ jobs:
 
       - name: Build for testing (iphoneos, unsigned, Release)
         run: |
-          set -o pipefail
+          mkdir -p build
           xcodebuild build-for-testing \
             -workspace "ios/$APP_NAME.xcworkspace" \
             -scheme "$APP_NAME" \
@@ -79,8 +79,9 @@ jobs:
             -derivedDataPath build/dd \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: .*ClauseHybridAi|\*\* (BUILD|TEST BUILD)" || true
-          test -d "build/dd/Build/Products/Release-iphoneos/$APP_NAME.app"
+            > build/xcodebuild.log 2>&1 || true
+          grep -E "error:|warning: .*ClauseHybridAi|\*\* (BUILD|TEST BUILD)" build/xcodebuild.log || true
+          grep -q "TEST BUILD SUCCEEDED" build/xcodebuild.log
 
       - name: Ad-hoc sign and package
         run: |
