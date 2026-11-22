@@ -11,6 +11,7 @@ const config = getDefaultConfig(projectRoot);
 config.watchFolders = [
   path.resolve(workspaceRoot, "shared"),
   path.resolve(workspaceRoot, "server/clause/contract"),
+  path.resolve(workspaceRoot, "server/clause/expense"),
 ];
 
 // Always resolve runtime packages (especially zod) from apps/mobile/node_modules
@@ -33,11 +34,15 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       platform,
     );
   }
-  return (defaultResolveRequest ?? context.resolveRequest)(
-    context,
-    moduleName,
-    platform,
-  );
+  const resolve = defaultResolveRequest ?? context.resolveRequest;
+  if (moduleName.startsWith(".") && moduleName.endsWith(".js")) {
+    try {
+      return resolve(context, moduleName, platform);
+    } catch (e) {
+      return resolve(context, moduleName.slice(0, -3), platform);
+    }
+  }
+  return resolve(context, moduleName, platform);
 };
 
 module.exports = config;
