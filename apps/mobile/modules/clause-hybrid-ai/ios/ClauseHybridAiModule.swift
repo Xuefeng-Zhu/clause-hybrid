@@ -15,11 +15,11 @@ import FoundationModels
 // parseContract / generateText). Inference is hybrid:
 //   - on-device: Apple Foundation Models (SystemLanguageModel, iOS 26+ with
 //     Apple Intelligence enabled), structured output via @Generable.
-//   - cloud: Firebase AI Logic (Gemini Developer API) with a JSON response
-//     schema, protected by App Check.
-// Firebase AI Logic 13.x removed its interim HybridModel wrapper, so the
-// prefer/only routing is implemented here, the same way the Android SDK's
-// InferenceMode behaves.
+//   - cloud: Gemini via Firebase AI Logic (Gemini Developer API), protected by
+//     App Check. Before iOS 26 the cloud call uses a JSON response schema.
+// On iOS 26+ routing uses Firebase AI Logic's hybrid API (HybridModel with the
+// Apple SystemLanguageModel and a Gemini model, CocoaPods FirebaseAILogic 12.19);
+// InferenceMode strings from JS map to primary/secondary order like Android.
 //
 // Log lines use the CLAUSE_* markers so device syslogs (e.g. Test Lab) show
 // which path ran.
@@ -356,14 +356,8 @@ public class ClauseHybridAiModule: Module {
     }
 
     AsyncFunction("warmUp") { () async in
+      // Firebase AI Logic's hybrid session manages the on-device session; nothing to prewarm.
       Self.ensureInitialized()
-      #if canImport(FoundationModels)
-      if #available(iOS 26.0, *) {
-        if case .available = SystemLanguageModel.default.availability {
-          LanguageModelSession().prewarm()
-        }
-      }
-      #endif
     }
 
     AsyncFunction("parseContract") {
@@ -373,19 +367,15 @@ public class ClauseHybridAiModule: Module {
         ? Self.defaultCloudModel : cloudModel
       let started = Date()
       do {
-        let (terms, source, usedModel) = try await Self.route(mode: mode, label: "parseContract") {
-          try await Self.parseOnDevice(system: system, prompt: prompt)
-        } cloud: {
-          try await Self.parseInCloud(system: system, prompt: prompt, modelName: model)
-        }
+        let (terms, source, usedModel) = try await Self.parse(
+          system: system, prompt: prompt, mode: mode, cloudModel: model
+        )
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(terms)
-        let json = String(data: data, encoding: .utf8) ?? "{}"
-        let finalModel = source == "on_device" ? usedModel : model
-        clauseLog("CLAUSE_RESULT", "fn=parseContract mode=\(mode) source=\(source) model=\(finalModel) ms=\(ms) ref=\(terms.contract_ref) total=\(terms.total_amount) \(terms.currency) milestones=\(terms.milestones.count)")
-        return ["json": json, "source": source, "model": finalModel, "ms": ms]
+        let json = String(data: try encoder.encode(terms), encoding: .utf8) ?? "{}"
+        clauseLog("CLAUSE_RESULT", "fn=parseContract mode=\(mode) source=\(source) model=\(usedModel) ms=\(ms) ref=\(terms.contract_ref) total=\(terms.total_amount) \(terms.currency) milestones=\(terms.milestones.count)")
+        return ["json": json, "source": source, "model": usedModel, "ms": ms]
       } catch {
         let mapped = Self.mapError(error)
         clauseLog("CLAUSE_ERROR", "fn=parseContract mode=\(mode) code=\(mapped.code) message=\(mapped.description)")
@@ -400,15 +390,10 @@ public class ClauseHybridAiModule: Module {
         ? Self.defaultCloudModel : cloudModel
       let started = Date()
       do {
-        let (text, source, usedModel) = try await Self.route(mode: mode, label: "generateText") {
-          try await Self.textOnDevice(prompt: prompt)
-        } cloud: {
-          try await Self.textInCloud(prompt: prompt, modelName: model)
-        }
+        let (text, source, usedModel) = try await Self.text(prompt: prompt, mode: mode, cloudModel: model)
         let ms = Int(Date().timeIntervalSince(started) * 1000)
-        let finalModel = source == "on_device" ? usedModel : model
-        clauseLog("CLAUSE_RESULT", "fn=generateText mode=\(mode) source=\(source) model=\(finalModel) ms=\(ms) chars=\(text.count)")
-        return ["text": text, "source": source, "model": finalModel, "ms": ms]
+        clauseLog("CLAUSE_RESULT", "fn=generateText mode=\(mode) source=\(source) model=\(usedModel) ms=\(ms) chars=\(text.count)")
+        return ["text": text, "source": source, "model": usedModel, "ms": ms]
       } catch {
         let mapped = Self.mapError(error)
         clauseLog("CLAUSE_ERROR", "fn=generateText mode=\(mode) code=\(mapped.code) message=\(mapped.description)")
@@ -471,62 +456,109 @@ public class ClauseHybridAiModule: Module {
     initialized = true
   }
 
-  // MARK: Routing (mirrors Android InferenceMode)
+  // MARK: Hybrid routing
+  //
+  // iOS 26+: Firebase AI Logic hybrid inference (GenerativeModelSession + HybridModel),
+  // on-device = Apple Foundation Models SystemLanguageModel, cloud = Gemini. The SDK
+  // falls back from the primary to the secondary model on its own, and
+  // rawResponse.modelVersion says which one answered.
+  // Older iOS has no Foundation Models, so those requests go to the cloud directly.
 
-  static func route<T>(
-    mode: String,
-    label: String,
-    onDevice: () async throws -> (T, String),
-    cloud: () async throws -> T
-  ) async throws -> (T, String, String) {
-    switch mode {
-    case "only_on_device":
-      let (value, model) = try await onDevice()
-      return (value, "on_device", model)
-    case "only_in_cloud":
-      return (try await cloud(), "in_cloud", defaultCloudModel)
-    case "prefer_in_cloud":
-      do {
-        return (try await cloud(), "in_cloud", defaultCloudModel)
-      } catch {
-        guard isNetworkError(error) else { throw error }
-        clauseLog("CLAUSE_FALLBACK", "fn=\(label) from=cloud to=on_device reason=\(error.localizedDescription)")
-        let (value, model) = try await onDevice()
-        return (value, "on_device", model)
-      }
-    default: // prefer_on_device
-      do {
-        let (value, model) = try await onDevice()
-        return (value, "on_device", model)
-      } catch {
-        clauseLog("CLAUSE_FALLBACK", "fn=\(label) from=on_device to=cloud reason=\(describe(error))")
-        return (try await cloud(), "in_cloud", defaultCloudModel)
-      }
+  static func source(fromModelVersion version: String?, cloudModel: String) -> (String, String) {
+    if let v = version, v.hasPrefix("apple-foundation-models") {
+      return ("on_device", onDeviceModelId)
     }
+    return ("in_cloud", cloudModel)
   }
 
-  // MARK: On-device
+  static func parse(system: String, prompt: String, mode: String, cloudModel: String)
+    async throws -> (ContractTermsOut, String, String) {
+    if mode == "only_on_device" {
+      try requireOnDevice()
+    }
+    #if compiler(>=6.2.3) && canImport(FoundationModels)
+    if #available(iOS 26.0, *) {
+      let session = try hybridSession(mode: mode, cloudModel: cloudModel, instructions: system)
+      let response = try await session.respond(to: prompt, generating: ODContractTerms.self)
+      let version: String? = response.rawResponse.modelVersion
+      let (source, model) = Self.source(fromModelVersion: version, cloudModel: cloudModel)
+      clauseLog("CLAUSE_HYBRID", "fn=parseContract mode=\(mode) modelVersion=\(version ?? "nil")")
+      return (response.content.out, source, model)
+    }
+    #endif
+    if mode == "only_on_device" {
+      throw OnDeviceUnavailable(reason: "requires iOS 26 (Foundation Models)")
+    }
+    if mode == "prefer_on_device" {
+      clauseLog("CLAUSE_FALLBACK", "fn=parseContract from=on_device to=cloud reason=iOS \(UIDevice.current.systemVersion) has no Foundation Models")
+    }
+    let terms = try await parseInCloud(system: system, prompt: prompt, modelName: cloudModel)
+    return (terms, "in_cloud", cloudModel)
+  }
+
+  static func text(prompt: String, mode: String, cloudModel: String)
+    async throws -> (String, String, String) {
+    if mode == "only_on_device" {
+      try requireOnDevice()
+    }
+    #if compiler(>=6.2.3) && canImport(FoundationModels)
+    if #available(iOS 26.0, *) {
+      let session = try hybridSession(mode: mode, cloudModel: cloudModel, instructions: nil)
+      let response = try await session.respond(to: prompt)
+      let version: String? = response.rawResponse.modelVersion
+      let (source, model) = Self.source(fromModelVersion: version, cloudModel: cloudModel)
+      return (response.content, source, model)
+    }
+    #endif
+    if mode == "only_on_device" {
+      throw OnDeviceUnavailable(reason: "requires iOS 26 (Foundation Models)")
+    }
+    return (try await textInCloud(prompt: prompt, modelName: cloudModel), "in_cloud", cloudModel)
+  }
+
+  #if compiler(>=6.2.3) && canImport(FoundationModels)
+  @available(iOS 26.0, *)
+  static func hybridSession(mode: String, cloudModel: String, instructions: String?) throws
+    -> GenerativeModelSession {
+    guard FirebaseApp.app() != nil else {
+      throw clauseError("PARSE_FAILED", "Firebase is not configured (GoogleService-Info.plist missing).")
+    }
+    let ai = FirebaseAI.firebaseAI(backend: .googleAI(), useLimitedUseAppCheckTokens: true)
+    let onDevice = FirebaseAI.SystemLanguageModel.default
+    let cloud = GeminiModelProvider.geminiModel(name: cloudModel)
+    let model: any LanguageModelProvider
+    switch mode {
+    case "only_on_device":
+      model = onDevice
+    case "only_in_cloud":
+      model = cloud
+    case "prefer_in_cloud":
+      model = HybridModelProvider.hybridModel(primary: cloud, secondary: onDevice)
+    default:
+      model = HybridModelProvider.hybridModel(primary: onDevice, secondary: cloud)
+    }
+    return ai.generativeModelSession(model: model, instructions: instructions)
+  }
+  #endif
+
+  // MARK: On-device availability
 
   static func onDeviceStatus() -> (String, String) {
-    #if canImport(FoundationModels)
-    if #available(iOS 26.0, *) {
-      switch SystemLanguageModel.default.availability {
-      case .available:
-        return ("available", "available")
-      case .unavailable(.modelNotReady):
-        return ("downloading", "modelNotReady")
-      case .unavailable(.appleIntelligenceNotEnabled):
-        return ("unavailable", "appleIntelligenceNotEnabled")
-      case .unavailable(.deviceNotEligible):
+    switch FirebaseAI.SystemLanguageModel.default.availability {
+    case .available:
+      return ("available", "available")
+    case .unavailable(.modelNotReady):
+      return ("downloading", "modelNotReady")
+    case .unavailable(.appleIntelligenceNotEnabled):
+      return ("unavailable", "appleIntelligenceNotEnabled")
+    case .unavailable(.deviceNotEligible):
+      if #available(iOS 26.0, *) {
         return ("unavailable", "deviceNotEligible")
-      case .unavailable(let other):
-        return ("unavailable", "\(other)")
       }
+      return ("unavailable", "requires iOS 26 (Foundation Models)")
+    case .unavailable(let other):
+      return ("unavailable", "\(other)")
     }
-    return ("unavailable", "requires iOS 26 (Foundation Models)")
-    #else
-    return ("unavailable", "built without FoundationModels SDK")
-    #endif
   }
 
   static func requireOnDevice() throws {
@@ -534,35 +566,6 @@ public class ClauseHybridAiModule: Module {
     if status != "available" {
       throw OnDeviceUnavailable(reason: detail)
     }
-  }
-
-  static func parseOnDevice(system: String, prompt: String) async throws -> (ContractTermsOut, String) {
-    try requireOnDevice()
-    #if canImport(FoundationModels)
-    if #available(iOS 26.0, *) {
-      let session = LanguageModelSession(instructions: system)
-      let response = try await session.respond(
-        to: prompt,
-        generating: ODContractTerms.self,
-        includeSchemaInPrompt: true,
-        options: GenerationOptions(temperature: 0.0)
-      )
-      return (response.content.out, onDeviceModelId)
-    }
-    #endif
-    throw OnDeviceUnavailable(reason: "requires iOS 26")
-  }
-
-  static func textOnDevice(prompt: String) async throws -> (String, String) {
-    try requireOnDevice()
-    #if canImport(FoundationModels)
-    if #available(iOS 26.0, *) {
-      let session = LanguageModelSession()
-      let response = try await session.respond(to: prompt)
-      return (response.content, onDeviceModelId)
-    }
-    #endif
-    throw OnDeviceUnavailable(reason: "requires iOS 26")
   }
 
   // MARK: Cloud (Firebase AI Logic)
@@ -622,14 +625,6 @@ public class ClauseHybridAiModule: Module {
     return "\(type(of: error)): \(error)"
   }
 
-  static func isNetworkError(_ error: Error) -> Bool {
-    let ns = error as NSError
-    if ns.domain == NSURLErrorDomain { return true }
-    let text = "\(error)".lowercased()
-    return text.contains("nsurlerrordomain") || text.contains("offline")
-      || text.contains("network connection")
-  }
-
   static func mapError(_ error: Error) -> Exception {
     if let ex = error as? Exception { return ex }
     if let od = error as? OnDeviceUnavailable {
@@ -641,7 +636,7 @@ public class ClauseHybridAiModule: Module {
     let full = "\(type(of: error)): \(error)".lowercased()
     #if canImport(FoundationModels)
     if #available(iOS 26.0, *) {
-      if let gen = error as? LanguageModelSession.GenerationError {
+      if let gen = error as? FoundationModels.LanguageModelSession.GenerationError {
         switch gen {
         case .rateLimited:
           return clauseError("QUOTA", "On-device model rate limited: \(gen.localizedDescription)")

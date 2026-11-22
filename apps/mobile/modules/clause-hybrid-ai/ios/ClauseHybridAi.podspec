@@ -11,9 +11,9 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'FirebaseCore', '~> 13.3'
-  s.dependency 'FirebaseAppCheck', '~> 13.3'
-  s.dependency 'FirebaseAILogic', '~> 13.3'
+  s.dependency 'FirebaseCore', '~> 12.19'
+  s.dependency 'FirebaseAppCheck', '~> 12.19'
+  s.dependency 'FirebaseAILogic', '~> 12.19'
   # Apple Foundation Models ships with iOS 26; weak-link so the app still launches on older iOS.
   s.weak_frameworks = 'FoundationModels'
 
