@@ -43,6 +43,9 @@ learnings.md
 data/*.lock
 
 # Mobile app local secrets/config
+*.jks
+*.keystore
+keystore.properties
 apps/mobile/google-services.json
 apps/mobile/GoogleService-Info.plist
 apps/mobile/android/

@@ -28,6 +28,7 @@ buildscript {
 def firebaseAiVersion = "18.2.0"
 def firebaseAiOndeviceVersion = "16.0.0-beta08"
 def firebaseAppCheckDebugVersion = "20.1.0"
+def firebaseAppCheckPlayIntegrityVersion = "20.1.0"
 def firebaseAiKspProcessorVersion = "17.0.0"
 // kotlinx-serialization-json 1.13.0 for Kotlin 2.4.x
 def kotlinxSerializationJsonVersion = "1.13.0"
@@ -58,7 +59,9 @@ dependencies {
   implementation("com.google.firebase:firebase-ai-ondevice:${firebaseAiOndeviceVersion}")
   // DownloadStatus.DownloadFailed exposes an interop exception type; needed on the compile classpath
   implementation("com.google.firebase:firebase-ai-ondevice-interop:${firebaseAiOndeviceVersion}")
+  // Debug builds use the debug provider; release builds use Play Integrity (see ClauseHybridAiModule.ensureInitialized).
   implementation("com.google.firebase:firebase-appcheck-debug:${firebaseAppCheckDebugVersion}")
+  implementation("com.google.firebase:firebase-appcheck-playintegrity:${firebaseAppCheckPlayIntegrityVersion}")
   ksp("com.google.firebase:firebase-ai-ksp-processor:${firebaseAiKspProcessorVersion}")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:${kotlinxSerializationJsonVersion}")
 }

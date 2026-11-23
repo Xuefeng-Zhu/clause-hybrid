@@ -23,6 +23,7 @@ import com.google.firebase.ai.type.QuotaExceededException
 import com.google.firebase.ai.type.content
 import com.google.firebase.appcheck.appCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import com.google.firebase.initialize
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
@@ -354,12 +355,17 @@ class ClauseHybridAiModule : Module() {
       }
       val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
       if (BuildConfig.DEBUG || isDebuggable) {
+        // Debug builds: App Check debug provider (register the logged debug secret in the console).
         Firebase.appCheck.installAppCheckProviderFactory(
           DebugAppCheckProviderFactory.getInstance(),
         )
       } else {
-        // TODO(release): Configure Play Integrity attestation for release builds:
-        // Firebase.appCheck.installAppCheckProviderFactory(PlayIntegrityAppCheckProviderFactory.getInstance())
+        // Release builds: Play Integrity attestation. The Android app must be registered for Play
+        // Integrity in App Check with the SHA-256 of the release (or Play app signing) certificate,
+        // and the app must be installed from Google Play for a verdict (see apps/mobile/README.md).
+        Firebase.appCheck.installAppCheckProviderFactory(
+          PlayIntegrityAppCheckProviderFactory.getInstance(),
+        )
       }
       initialized = true
     }
