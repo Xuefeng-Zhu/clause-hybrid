@@ -22,6 +22,9 @@ vi.mock("firebase/ai", () => ({
 vi.mock("../app/lib/firebase", () => ({
   isFirebaseConfigured: () => true,
   getFirebaseAI: () => ({}),
+  getOnDeviceOnlyAI: () => ({}),
+  isCloudAiDisabled: () => false,
+  CloudAiDisabledError: class CloudAiDisabledError extends Error {},
   getFirebaseAuth: () => null,
   getFirebaseDb: () => null,
   getDefaultCloudModel: () => "gemini-3.5-flash-lite",

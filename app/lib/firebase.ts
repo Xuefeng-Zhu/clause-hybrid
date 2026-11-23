@@ -48,9 +48,29 @@ const VALID_HYBRID_MODES = new Set<HybridMode>([
 
 export interface FirebaseClientServices {
   app: FirebaseApp;
-  ai: AI;
+  /** null when cloud AI is disabled (production build without App Check). */
+  ai: AI | null;
   appCheck: AppCheck | null;
   remoteConfig: RemoteConfig | null;
+}
+
+export const APP_CHECK_NOT_CONFIGURED_MESSAGE =
+  "App Check not configured: cloud AI disabled. On-device and offline rules still work.";
+
+/**
+ * Thrown instead of creating a Firebase AI Logic client when this build can't attest itself with
+ * App Check (production build without VITE_RECAPTCHA_ENTERPRISE_SITE_KEY). Nothing was sent.
+ */
+export class CloudAiDisabledError extends Error {
+  readonly reason = "appcheck-not-configured" as const;
+  constructor() {
+    super(APP_CHECK_NOT_CONFIGURED_MESSAGE);
+    this.name = "CloudAiDisabledError";
+  }
+}
+
+export function isCloudAiDisabledError(err: unknown): err is CloudAiDisabledError {
+  return err instanceof CloudAiDisabledError || (err as { name?: unknown } | null)?.name === "CloudAiDisabledError";
 }
 
 declare global {
@@ -119,39 +139,31 @@ export function getFirebaseServices(): FirebaseClientServices {
   const app = existing ?? initializeApp(firebaseConfig);
 
   const siteKey = readEnv("VITE_RECAPTCHA_ENTERPRISE_SITE_KEY");
-  const debugToken = readEnv("VITE_APPCHECK_DEBUG_TOKEN");
-
-  if (debugToken && typeof self !== "undefined") {
-    (self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN =
-      debugToken === "true" ? true : debugToken;
-  }
 
   let appCheck: AppCheck | null = null;
-  if (siteKey) {
+  // Dev builds only: `import.meta.env.DEV` is the literal `false` in production builds, so this
+  // branch and the debug-token helper are dropped from the production bundle.
+  if (import.meta.env.DEV) {
+    appCheck = initDevAppCheckDebugProvider(app, siteKey);
+  }
+  if (!appCheck && siteKey) {
     appCheck = initializeAppCheck(app, {
       provider: new ReCaptchaEnterpriseProvider(siteKey),
       isTokenAutoRefreshEnabled: true,
     });
-  } else if (debugToken) {
-    // Setting self.FIREBASE_APPCHECK_DEBUG_TOKEN activates Firebase App Check's built-in DebugProvider.
-    appCheck = initializeAppCheck(app, {
-      provider: new CustomProvider({
-        getToken: async () => {
-          throw new Error("App Check debug token provider expected.");
-        },
-      }),
-      isTokenAutoRefreshEnabled: true,
-    });
-  } else {
-    console.warn(
-      "[clause] Firebase App Check skipped: neither VITE_RECAPTCHA_ENTERPRISE_SITE_KEY nor VITE_APPCHECK_DEBUG_TOKEN is set.",
-    );
   }
 
-  const ai = getAI(app, {
-    backend: new GoogleAIBackend(),
-    useLimitedUseAppCheckTokens: Boolean(appCheck),
-  });
+  // Production builds fail closed: without App Check there is no Firebase AI Logic client at all.
+  // Dev builds without any App Check config keep the client (the backend rejects it when enforced).
+  const ai = appCheck || !import.meta.env.PROD
+    ? getAI(app, {
+        backend: new GoogleAIBackend(),
+        useLimitedUseAppCheckTokens: Boolean(appCheck),
+      })
+    : null;
+  if (!ai) {
+    console.warn(`[clause] ${APP_CHECK_NOT_CONFIGURED_MESSAGE} (VITE_RECAPTCHA_ENTERPRISE_SITE_KEY is not set.)`);
+  }
 
   let remoteConfig: RemoteConfig | null = null;
   try {
@@ -178,8 +190,63 @@ export function getFirebaseServices(): FirebaseClientServices {
   return cachedServices;
 }
 
+/** True when this build has no App Check provider, so the Firebase AI Logic client is never created. */
+export function isCloudAiDisabled(): boolean {
+  if (!isFirebaseConfigured()) return false;
+  if (!import.meta.env.PROD) return false;
+  return !readEnv("VITE_RECAPTCHA_ENTERPRISE_SITE_KEY");
+}
+
+/** The Firebase AI Logic client. Throws CloudAiDisabledError (nothing sent) when App Check is missing. */
 export function getFirebaseAI(): AI {
-  return getFirebaseServices().ai;
+  const { ai } = getFirebaseServices();
+  if (!ai) throw new CloudAiDisabledError();
+  return ai;
+}
+
+let cachedOnDeviceAI: AI | null = null;
+
+/**
+ * A client for ONLY_ON_DEVICE inference (Gemini Nano in Chrome) when cloud AI is disabled. On-device
+ * inference never calls the backend, so it needs no App Check. Callers must only use it with
+ * InferenceMode.ONLY_ON_DEVICE after Chrome reports the local model "available".
+ */
+export function getOnDeviceOnlyAI(): AI {
+  if (cachedOnDeviceAI) return cachedOnDeviceAI;
+  const { app, ai } = getFirebaseServices();
+  cachedOnDeviceAI = ai ?? getAI(app, { backend: new GoogleAIBackend() });
+  return cachedOnDeviceAI;
+}
+
+/**
+ * Dev-only App Check debug provider. Never reached in production builds (see the
+ * `import.meta.env.DEV` guard at the call site). Reads VITE_APPCHECK_DEBUG_TOKEN from .env.local.
+ */
+function initDevAppCheckDebugProvider(app: FirebaseApp, siteKey: string): AppCheck | null {
+  if (!import.meta.env.DEV) return null;
+  const debugToken = readEnv("VITE_APPCHECK_DEBUG_TOKEN");
+  if (!debugToken || typeof self === "undefined") {
+    if (!siteKey) {
+      console.warn(
+        "[clause] Firebase App Check skipped (dev): neither VITE_RECAPTCHA_ENTERPRISE_SITE_KEY nor VITE_APPCHECK_DEBUG_TOKEN is set.",
+      );
+    }
+    return null;
+  }
+  (self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN =
+    debugToken === "true" ? true : debugToken;
+  // Setting self.FIREBASE_APPCHECK_DEBUG_TOKEN activates Firebase App Check's built-in DebugProvider,
+  // whichever provider is passed here.
+  return initializeAppCheck(app, {
+    provider: siteKey
+      ? new ReCaptchaEnterpriseProvider(siteKey)
+      : new CustomProvider({
+          getToken: async () => {
+            throw new Error("App Check debug token provider expected.");
+          },
+        }),
+    isTokenAutoRefreshEnabled: true,
+  });
 }
 
 export function getFirebaseAuth(): Auth | null {
@@ -296,6 +363,7 @@ export function getRemoteConfigStepMode(
 /** Reset cached client singletons (for unit tests). */
 export function resetFirebaseServicesForTest(): void {
   cachedServices = null;
+  cachedOnDeviceAI = null;
   cachedAuth = null;
   cachedDb = null;
 }

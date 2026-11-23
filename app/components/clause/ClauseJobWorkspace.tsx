@@ -57,7 +57,12 @@ import { chooseEvidenceMode, evaluateEvidenceInBrowser } from "@/lib/clause-ai/e
 import { explainExceptionInBrowser } from "@/lib/clause-ai/exception";
 import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
-import { isFirebaseConfigured, isStrictOnDevice } from "@/lib/firebase";
+import {
+  APP_CHECK_NOT_CONFIGURED_MESSAGE,
+  isCloudAiDisabled,
+  isFirebaseConfigured,
+  isStrictOnDevice,
+} from "@/lib/firebase";
 import {
   formatAiSource,
   isNavigatorOffline,
@@ -353,6 +358,14 @@ export function ClauseJobWorkspace() {
   /** Honest toast when the browser AI path hands a step to the Clause server. */
   function serverFallbackToast(hybridText: string) {
     if (!isFirebaseConfigured()) return;
+    if (isCloudAiDisabled()) {
+      toast.message(
+        runtime?.contestMode
+          ? `${APP_CHECK_NOT_CONFIGURED_MESSAGE} The server's offline rules answer instead (no model ran).`
+          : APP_CHECK_NOT_CONFIGURED_MESSAGE,
+      );
+      return;
+    }
     toast.message(
       runtime?.contestMode
         ? "Firebase AI Logic couldn't run in this browser. Contest mode uses no other model: the server's offline rules answer instead (no model ran)."

@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { SAMPLE_POLICY_TEXT, SAMPLE_QUOTE_TEXT } from "@/lib/clause-samples";
-import { isFirebaseConfigured } from "@/lib/firebase";
+import { APP_CHECK_NOT_CONFIGURED_MESSAGE, isCloudAiDisabled, isFirebaseConfigured } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
 import { WhatLeavesThisDevice } from "./AiSourceBadge";
@@ -189,6 +189,15 @@ function QuoteIntakeForm({
         </div>
       ) : null}
       {offlineNotice && noticeActions ? noticeActions : null}
+      {isCloudAiDisabled() ? (
+        <div
+          role="status"
+          data-testid="cloud-ai-disabled"
+          className="rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-xs font-medium text-stone-700"
+        >
+          {APP_CHECK_NOT_CONFIGURED_MESSAGE}
+        </div>
+      ) : null}
       {isFirebaseConfigured() ? <WhatLeavesThisDevice /> : null}
     </div>
   );

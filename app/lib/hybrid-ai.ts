@@ -13,8 +13,11 @@ import { stripNulls } from "../../shared/clause-ai/validate.js";
 import {
   type AiStep,
   getDefaultCloudModel,
+  CloudAiDisabledError,
   getFirebaseAI,
+  getOnDeviceOnlyAI,
   getRemoteConfigStepMode,
+  isCloudAiDisabled,
   getRemoteConfigString,
   type HybridMode,
 } from "./firebase";
@@ -221,10 +224,25 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
   const cloudModel = req.cloudModel ?? getRemoteConfigString("cloud_model", getDefaultCloudModel());
   const jsonSchema = toModelJsonSchema(req.schema);
 
-  const ai = req.ai ?? getFirebaseAI();
+  // Production build without App Check: no cloud client exists. Only Chrome's local model may run,
+  // and only when it is ready; otherwise stop here (nothing sent) and let the caller fall back.
+  let runMode: HybridMode = mode;
+  let ai: AI;
+  if (req.ai) {
+    ai = req.ai;
+  } else if (isCloudAiDisabled()) {
+    const pdf = req.files?.some((f) => f.mimeType === "application/pdf");
+    if (mode === "only_in_cloud" || pdf || (await onDeviceAvailability()) !== "available") {
+      throw new CloudAiDisabledError();
+    }
+    runMode = "only_on_device";
+    ai = getOnDeviceOnlyAI();
+  } else {
+    ai = getFirebaseAI();
+  }
 
   const model = getGenerativeModel(ai, {
-    mode: MODE_MAP[mode] ?? InferenceMode.PREFER_ON_DEVICE,
+    mode: MODE_MAP[runMode] ?? InferenceMode.PREFER_ON_DEVICE,
     inCloudParams: {
       model: cloudModel,
       systemInstruction: req.system,
@@ -264,7 +282,7 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
   const source: AiSource =
     response.inferenceSource === "on_device" || response.inferenceSource === "in_cloud"
       ? response.inferenceSource
-      : mode === "only_on_device"
+      : runMode === "only_on_device"
         ? "on_device"
         : "in_cloud";
 

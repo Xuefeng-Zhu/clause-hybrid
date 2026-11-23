@@ -11,6 +11,7 @@ vi.mock("@tabler/icons-react", () => {
 
 import { EmptyJobState } from "../app/components/clause/NewJobDialog";
 import { OnDeviceNoticeActions } from "../app/components/clause/PrivacyModeControls";
+import { APP_CHECK_NOT_CONFIGURED_MESSAGE } from "../app/lib/firebase";
 import { ON_DEVICE_UNAVAILABLE_MESSAGE } from "../app/lib/hybrid-ai";
 
 describe("strict on-device notice", () => {
@@ -73,5 +74,36 @@ describe("strict on-device notice", () => {
     const btn = [...document.querySelectorAll("button")].find((b) => b.textContent === "Save draft");
     await act(async () => btn!.click());
     expect(onSaveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an honest App Check notice when a production build has no site key", async () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.stubEnv("DEV", false);
+    vi.stubEnv("PROD", true);
+    vi.stubEnv("VITE_FIREBASE_API_KEY", "test-api-key");
+    vi.stubEnv("VITE_FIREBASE_PROJECT_ID", "test-project");
+    vi.stubEnv("VITE_FIREBASE_APP_ID", "1:123:web:abc");
+    vi.stubEnv("VITE_RECAPTCHA_ENTERPRISE_SITE_KEY", "");
+    try {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      await act(async () => {
+        root!.render(
+          createElement(EmptyJobState, {
+            quoteText: "",
+            onQuoteTextChange: () => {},
+            onParse: () => {},
+            busy: false,
+            dialogOpen: false,
+          }),
+        );
+      });
+      expect(document.querySelector("[data-testid='cloud-ai-disabled']")?.textContent).toBe(
+        APP_CHECK_NOT_CONFIGURED_MESSAGE,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
