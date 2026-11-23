@@ -19,7 +19,7 @@ import {
   IconUser,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,7 @@ import {
   needsConnectionOffline,
 } from "@/lib/hybrid-ai";
 import { SandboxToolsDrawer } from "./SandboxToolsDrawer";
+import { useJobSelection } from "./use-job-selection";
 import { MetalMandatePanel, type MandateStateLite } from "./MetalMandatePanel";
 import { ContractorPhone } from "./ContractorPhone";
 import {
@@ -156,39 +157,15 @@ function WorkspaceLoadingSkeleton() {
 
 export function ClauseJobWorkspace() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const urlJobId = searchParams.get("job")?.trim() || "";
-
   const listQuery = useActionQuery("list-jobs", {});
   const jobs = (listQuery.data?.jobs ?? []) as JobSummary[];
   const runtime = listQuery.data?.runtime as RuntimeInfo | undefined;
 
-  const activeJobId =
-    (urlJobId && jobs.some((j) => j.id === urlJobId) ? urlJobId : "") ||
-    jobs[0]?.id ||
-    "";
-
-  useEffect(() => {
-    if (activeJobId && urlJobId !== activeJobId) {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("job", activeJobId);
-          return next;
-        },
-        { replace: true },
-      );
-    } else if (!activeJobId && urlJobId && !listQuery.isLoading) {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete("job");
-          return next;
-        },
-        { replace: true },
-      );
-    }
-  }, [activeJobId, listQuery.isLoading, setSearchParams, urlJobId]);
+  const { activeJobId, selectJob, clearSelection } = useJobSelection({
+    jobIds: jobs.map((j) => j.id),
+    isLoading: listQuery.isLoading,
+    refetchJobs: listQuery.refetch,
+  });
 
   const jobQuery = useActionQuery(
     "get-job",
@@ -425,14 +402,7 @@ export function ClauseJobWorkspace() {
         saveRawQuoteForJob(res.summary.id, usedText);
         setParseOfflineNotice(null);
         setNewJobOpen(false);
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev);
-            next.set("job", res.summary.id);
-            return next;
-          },
-          { replace: true },
-        );
+        selectJob(res.summary.id, { justCreated: true });
         toast.success(
           res.kind === "policy"
             ? `Extracted policy controls & ${formatCurrency(res.summary.total, res.summary.currency)} budget from ${res.summary.contractRef}.`
@@ -918,7 +888,7 @@ export function ClauseJobWorkspace() {
         setProofOfflineNotice(null);
         setExpenseReportOpen(false);
         setActivityOpen(false);
-        setSearchParams(new URLSearchParams(), { replace: true });
+        clearSelection();
         toast.success("Workspace cleared.");
       },
     );
@@ -1020,14 +990,7 @@ export function ClauseJobWorkspace() {
                           <DropdownMenuItem
                             key={j.id}
                             onSelect={() => {
-                              setSearchParams(
-                                (prev) => {
-                                  const next = new URLSearchParams(prev);
-                                  next.set("job", j.id);
-                                  return next;
-                                },
-                                { replace: true },
-                              );
+                              selectJob(j.id);
                             }}
                             className="flex items-center justify-between gap-2 text-xs"
                           >
