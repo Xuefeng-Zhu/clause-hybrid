@@ -167,7 +167,7 @@ export function ActionBar({
   const approveReleaseLabel = !pendingRelease
     ? "Approve release"
     : pendingRelease.verdict?.verdict === "insufficient"
-      ? `${releaseMilestoneLabel} proof doesn't meet requirements — ${releaseAmountLabel} stays locked`
+      ? `${releaseMilestoneLabel} proof doesn’t meet requirements — ${releaseAmountLabel} stays locked`
       : pendingRelease.verdict?.verdict === "unclear"
         ? `${releaseMilestoneLabel} proof needs a look — Approve release ${releaseAmountLabel}`
         : `${releaseMilestoneLabel} proof meets requirements — Approve release ${releaseAmountLabel}`;
@@ -318,7 +318,7 @@ export function ActionBar({
                     )}
                   >
                     {pendingRelease.verdict?.verdict === "insufficient"
-                      ? "Doesn't meet"
+                      ? "Doesn’t meet"
                       : "Meets requirements"}
                   </span>
                   {pendingRelease.aiSource ? (

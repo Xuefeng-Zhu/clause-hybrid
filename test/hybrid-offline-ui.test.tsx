@@ -298,6 +298,62 @@ describe("offline needs-connection UI notices", () => {
     expect(badge?.getAttribute("data-ai-source")).toBe("offline");
   });
 
+  it("server-rejected proof: badged, one apostrophe style in verdict and release button", async () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const savedGemini = config.gemini.apiKey;
+    config.anthropic.apiKey = undefined;
+    config.gemini.apiKey = undefined;
+    const svc = new ContractCardService(new MockIssuingGateway(), new MemoryJobStore(), "owner@example.com");
+    let contractJob = await svc.createJob({ kind: "text", text: SAMPLES.quote });
+    contractJob = await svc.approveTerms(contractJob.id);
+    contractJob = await svc.submitProof(contractJob.id, [
+      {
+        filename: "stock-cabinets.jpg",
+        mediaType: "image/jpeg",
+        base64: Buffer.alloc(128, 1).toString("base64"),
+        declaredKind: "photos",
+      },
+    ]);
+    config.gemini.apiKey = savedGemini;
+    expect(contractJob.pending?.verdict?.verdict).toBe("insufficient");
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(ActionBar, {
+          job: contractJob as unknown as ClauseJob,
+          summary: summarize(contractJob) as unknown as JobSummary,
+          busyLabel: null,
+          onCancelBusy: () => {},
+          onApproveTerms: () => {},
+          proofSheetOpen: false,
+          onProofSheetOpenChange: () => {},
+          proofKind: "photos",
+          onProofKindChange: () => {},
+          proofInputRef: createRef<HTMLInputElement>(),
+          stagedProofFiles: [],
+          onStageSelectedFiles: () => {},
+          onRemoveStagedFile: () => {},
+          onSubmitProof: () => {},
+          onApproveRelease: () => {},
+          coSheetOpen: false,
+          onCoSheetOpenChange: () => {},
+          coEmailText: "",
+          onCoEmailTextChange: () => {},
+          onDraftChangeOrder: () => {},
+          onApproveChangeOrder: () => {},
+          onRejectPending: () => {},
+        }),
+      );
+    });
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("proof doesn’t meet requirements");
+    expect(text).not.toMatch(/n't meet/);
+    expect(document.querySelector("[data-testid='ai-source-badge']")?.textContent).toBe("Offline rules");
+  });
+
   it("renders the Server badge for a live server model call", () => {
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
