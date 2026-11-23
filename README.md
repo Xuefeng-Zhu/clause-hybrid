@@ -73,6 +73,7 @@ The Firebase AI Logic contest requires generative AI to run through the Firebase
 
 - `server/clause/llm.ts` reports no provider and `callTool` refuses, so no Gemini REST or Anthropic call is made, even if `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` are set ([`server/clause/contest-mode.ts`](./server/clause/contest-mode.ts)).
 - When the browser's Firebase AI Logic call can't run (no App Check token, quota, unsupported browser), the server fallback applies only its deterministic offline rules, badged **Offline rules**. Those rules read only the bundled samples; any other document gets a plain error instead of a model call.
+- App Check fails closed on the web. A production build without `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` never creates the Firebase AI Logic client: the app says "App Check not configured: cloud AI disabled", runs only Chrome's on-device model when it is ready, and otherwise uses the offline rules. The App Check debug-token code exists only in dev builds (`import.meta.env.DEV`) and is compiled out of production bundles, and the build drops `VITE_APPCHECK_DEBUG_TOKEN` from the inlined env.
 - PDF proof goes inline to cloud Gemini through Firebase AI Logic in the browser (`ONLY_IN_CLOUD`), not to the server.
 - The agent chat (a direct provider call) is hidden in the UI and refused server-side.
 - `list-jobs` returns `runtime.contestMode`, so the UI's fallback messages say what happened.
