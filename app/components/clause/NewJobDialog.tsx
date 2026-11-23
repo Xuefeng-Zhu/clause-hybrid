@@ -6,6 +6,7 @@ import {
   IconSparkles,
 } from "@tabler/icons-react";
 
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,6 +30,7 @@ interface QuoteIntakeFormProps {
   busy: boolean;
   mountParseId: boolean;
   offlineNotice?: string | null | undefined;
+  noticeActions?: ReactNode;
 }
 
 function StepPillRow() {
@@ -68,6 +70,7 @@ function QuoteIntakeForm({
   busy,
   mountParseId,
   offlineNotice,
+  noticeActions,
 }: QuoteIntakeFormProps) {
   const isQuoteSample = quoteText.trim() === SAMPLE_QUOTE_TEXT.trim();
   const isPolicySample = quoteText.trim() === SAMPLE_POLICY_TEXT.trim();
@@ -185,6 +188,7 @@ function QuoteIntakeForm({
           {offlineNotice}
         </div>
       ) : null}
+      {offlineNotice && noticeActions ? noticeActions : null}
       {isFirebaseConfigured() ? <WhatLeavesThisDevice /> : null}
     </div>
   );
@@ -197,6 +201,7 @@ interface EmptyJobStateProps {
   busy: boolean;
   dialogOpen: boolean;
   offlineNotice?: string | null | undefined;
+  noticeActions?: ReactNode;
 }
 
 export function EmptyJobState({
@@ -206,6 +211,7 @@ export function EmptyJobState({
   busy,
   dialogOpen,
   offlineNotice,
+  noticeActions,
 }: EmptyJobStateProps) {
   return (
     <div className="mx-auto flex w-full max-w-[740px] flex-1 flex-col justify-center px-4 py-10 sm:px-6 sm:py-12">
@@ -236,6 +242,7 @@ export function EmptyJobState({
         busy={busy}
         mountParseId={!dialogOpen}
         offlineNotice={offlineNotice}
+            noticeActions={noticeActions}
       />
     </div>
   );
@@ -249,6 +256,7 @@ interface NewJobDialogProps {
   onParse: () => void;
   busy: boolean;
   offlineNotice?: string | null | undefined;
+  noticeActions?: ReactNode;
 }
 
 export function NewJobDialog({
@@ -259,6 +267,7 @@ export function NewJobDialog({
   onParse,
   busy,
   offlineNotice,
+  noticeActions,
 }: NewJobDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -282,6 +291,7 @@ export function NewJobDialog({
             busy={busy}
             mountParseId={true}
             offlineNotice={offlineNotice}
+            noticeActions={noticeActions}
           />
         ) : null}
 

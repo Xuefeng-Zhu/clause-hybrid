@@ -57,13 +57,16 @@ import { chooseEvidenceMode, evaluateEvidenceInBrowser } from "@/lib/clause-ai/e
 import { explainExceptionInBrowser } from "@/lib/clause-ai/exception";
 import { parseExpenseInBrowser } from "@/lib/clause-ai/expense";
 import { parseDocumentInBrowser } from "@/lib/clause-ai/parse";
-import { isFirebaseConfigured } from "@/lib/firebase";
+import { isFirebaseConfigured, isStrictOnDevice } from "@/lib/firebase";
 import {
   formatAiSource,
   isNavigatorOffline,
+  isNothingSentResult,
   NEEDS_CONNECTION_MESSAGE,
   needsConnectionOffline,
+  ON_DEVICE_FAILED_MESSAGE,
 } from "@/lib/hybrid-ai";
+import { OnDeviceNoticeActions, usePrivacyMode } from "./PrivacyModeControls";
 import { SandboxToolsDrawer } from "./SandboxToolsDrawer";
 import { useJobSelection } from "./use-job-selection";
 import { MetalMandatePanel, type MandateStateLite } from "./MetalMandatePanel";
@@ -221,12 +224,23 @@ export function ClauseJobWorkspace() {
   const [exceptionOfflineNotice, setExceptionOfflineNotice] = useState<string | null>(null);
   const [coOfflineNotice, setCoOfflineNotice] = useState<string | null>(null);
   const [proofOfflineNotice, setProofOfflineNotice] = useState<string | null>(null);
+  /** A document read in the browser whose save failed; retried with only its extracted terms. */
+  const [localDraft, setLocalDraft] = useState<{
+    input: Parameters<typeof createFromTermsMut.mutateAsync>[0];
+    usedText: string;
+  } | null>(null);
+  const localDraftRef = useRef(localDraft);
+  localDraftRef.current = localDraft;
+  const privacyMode = usePrivacyMode();
   const activeClauseId = hoveredClauseId ?? pinnedClauseId;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onOnline = () => {
-      setParseOfflineNotice(null);
+      // A draft read offline stays until the user saves it; only its notice changes.
+      setParseOfflineNotice(
+        localDraftRef.current ? "Back online. Save draft sends only the extracted terms, not the document." : null,
+      );
       setExceptionOfflineNotice(null);
       setCoOfflineNotice(null);
       setProofOfflineNotice(null);
@@ -333,85 +347,150 @@ export function ClauseJobWorkspace() {
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
+  type CreateFromTermsInput = Parameters<typeof createFromTermsMut.mutateAsync>[0];
+  type CreatedJob = Awaited<ReturnType<typeof createFromTermsMut.mutateAsync>>;
+
+  /** Honest toast when the browser AI path hands a step to the Clause server. */
+  function serverFallbackToast(hybridText: string) {
+    if (!isFirebaseConfigured()) return;
+    toast.message(
+      runtime?.contestMode
+        ? "Firebase AI Logic couldn't run in this browser. Contest mode uses no other model: the server's offline rules answer instead (no model ran)."
+        : hybridText,
+    );
+  }
+
+  function showParseNotice(message: string) {
+    setParseOfflineNotice(message);
+    toast.error(message);
+  }
+
+  /**
+   * Persist a document read in the browser. Only the structured terms go to the server. If saving
+   * fails (offline, server error), keep the draft on this device and offer to retry with the same
+   * terms; never re-read the raw text on the server.
+   */
+  async function saveBrowserDraft(input: CreateFromTermsInput, usedText: string): Promise<CreatedJob | null> {
+    try {
+      const res = await createFromTermsMut.mutateAsync(input);
+      setLocalDraft(null);
+      return res;
+    } catch (err) {
+      setLocalDraft({ input, usedText });
+      const where = input.aiSource?.source === "on_device" ? "on this device" : "in the browser";
+      showParseNotice(
+        isNavigatorOffline()
+          ? `Read ${where}, but you're offline so it isn't saved yet. Nothing was sent. Reconnect and press Save draft.`
+          : `Read ${where}, but saving failed (${actionErrorMessage(err) ?? (err instanceof Error ? err.message : "error")}). Save draft retries with only the extracted terms.`,
+      );
+      return null;
+    }
+  }
+
+  async function handleSaveLocalDraft() {
+    const draft = localDraft;
+    if (!draft) return;
+    setParseOfflineNotice(null);
+    await runExclusive(
+      "Saving draft…",
+      () => saveBrowserDraft(draft.input, draft.usedText),
+      (res) => finishParse(res, draft.usedText, Boolean(quoteText.trim())),
+    );
+  }
+
+  function finishParse(res: CreatedJob | Awaited<ReturnType<typeof parseQuoteMut.mutateAsync>> | null, usedText: string, hadText: boolean) {
+    if (!res) return;
+    saveRawQuoteForJob(res.summary.id, usedText);
+    setParseOfflineNotice(null);
+    setLocalDraft(null);
+    setNewJobOpen(false);
+    selectJob(res.summary.id, { justCreated: true });
+    toast.success(
+      res.kind === "policy"
+        ? `Extracted policy controls & ${formatCurrency(res.summary.total, res.summary.currency)} budget from ${res.summary.contractRef}.`
+        : `Extracted ${res.terms.milestones.length} milestones from ${res.summary.contractRef}.`,
+    );
+    if (!hadText) {
+      setQuoteText(SAMPLE_QUOTE_TEXT);
+    }
+  }
+
   async function handleParseQuote() {
     const trimmed = quoteText.trim();
     const usedText = trimmed || SAMPLE_QUOTE_TEXT;
     setParseOfflineNotice(null);
+    setLocalDraft(null);
+    const isPolicy = looksLikePolicyText(usedText);
+    // Strict private mode (ONLY_ON_DEVICE): the raw text never leaves the browser, not even on errors.
+    const strict = isStrictOnDevice(isPolicy ? "expense" : "contract");
     await runExclusive(
       "Reading document…",
       async () => {
         // Clause Private: read the document in the browser (Gemini Nano on-device, cloud Gemini
-        // fallback via Firebase AI Logic) and send only the structured terms to the server.
-        if (looksLikePolicyText(usedText)) {
+        // via Firebase AI Logic) and send only the structured terms to the server.
+        if (isPolicy) {
           const parsed = await parseExpenseInBrowser(usedText, {
-            serverFallback: () =>
-              parseQuoteMut.mutateAsync(
-                trimmed ? { text: trimmed } : { useSample: true, sampleKind: "policy" },
-              ),
+            ...(strict
+              ? {}
+              : {
+                  serverFallback: () =>
+                    parseQuoteMut.mutateAsync(
+                      trimmed ? { text: trimmed } : { useSample: true, sampleKind: "policy" },
+                    ),
+                }),
           });
-          if (parsed.status === "needs-connection") {
-            setParseOfflineNotice(parsed.message);
-            toast.error(parsed.message);
+          if (isNothingSentResult(parsed)) {
+            showParseNotice(parsed.message);
             return null;
           }
           if (parsed.status === "fallback") {
-            if (isFirebaseConfigured()) {
-              toast.message("On-device read unavailable; reading on the server.");
+            if (strict || parsed.fallback === undefined) {
+              showParseNotice(ON_DEVICE_FAILED_MESSAGE);
+              return null;
             }
+            serverFallbackToast("On-device read unavailable; reading on the server.");
             return parsed.fallback;
           }
-          const res = await createFromTermsMut.mutateAsync({
-            kind: "policy",
-            policyTerms: parsed.policyTerms,
-            aiSource: parsed.ai,
-          });
-          toast.message(formatAiSource(parsed.ai));
+          const res = await saveBrowserDraft(
+            { kind: "policy", policyTerms: parsed.policyTerms, aiSource: parsed.ai },
+            usedText,
+          );
+          if (res) toast.message(formatAiSource(parsed.ai));
           return res;
         }
+
+        let parsed: Awaited<ReturnType<typeof parseDocumentInBrowser>>;
         try {
-          const parsed = await parseDocumentInBrowser(usedText);
-          if (parsed.kind === "needs-connection") {
-            setParseOfflineNotice(parsed.message);
-            toast.error(parsed.message);
-            return null;
-          }
-          const res = await createFromTermsMut.mutateAsync(
-            parsed.kind === "policy"
-              ? { kind: "policy", policyTerms: parsed.policyTerms, aiSource: parsed.ai }
-              : { kind: "contract", terms: parsed.terms, aiSource: parsed.ai },
-          );
-          toast.message(formatAiSource(parsed.ai));
-          return res;
+          parsed = await parseDocumentInBrowser(usedText);
         } catch (err) {
           if (isNavigatorOffline()) {
-            setParseOfflineNotice(NEEDS_CONNECTION_MESSAGE);
-            toast.error(NEEDS_CONNECTION_MESSAGE);
+            showParseNotice(NEEDS_CONNECTION_MESSAGE);
+            return null;
+          }
+          if (strict) {
+            showParseNotice(ON_DEVICE_FAILED_MESSAGE);
             return null;
           }
           if (isFirebaseConfigured()) {
             console.warn("[clause] Browser parse failed; using server parse.", err);
-            toast.message("On-device read unavailable; reading on the server.");
           }
+          serverFallbackToast("On-device read unavailable; reading on the server.");
+          return parseQuoteMut.mutateAsync(trimmed ? { text: trimmed } : { useSample: true });
         }
-        return parseQuoteMut.mutateAsync(
-          trimmed ? { text: trimmed } : { useSample: true },
-        );
-      },
-      (res) => {
-        if (!res) return;
-        saveRawQuoteForJob(res.summary.id, usedText);
-        setParseOfflineNotice(null);
-        setNewJobOpen(false);
-        selectJob(res.summary.id, { justCreated: true });
-        toast.success(
-          res.kind === "policy"
-            ? `Extracted policy controls & ${formatCurrency(res.summary.total, res.summary.currency)} budget from ${res.summary.contractRef}.`
-            : `Extracted ${res.terms.milestones.length} milestones from ${res.summary.contractRef}.`,
-        );
-        if (!trimmed) {
-          setQuoteText(SAMPLE_QUOTE_TEXT);
+        if (isNothingSentResult(parsed)) {
+          showParseNotice(parsed.message);
+          return null;
         }
+        const res = await saveBrowserDraft(
+          parsed.kind === "policy"
+            ? { kind: "policy", policyTerms: parsed.policyTerms, aiSource: parsed.ai }
+            : { kind: "contract", terms: parsed.terms, aiSource: parsed.ai },
+          usedText,
+        );
+        if (res) toast.message(formatAiSource(parsed.ai));
+        return res;
       },
+      (res) => finishParse(res, usedText, Boolean(trimmed)),
     );
   }
 
@@ -560,14 +639,14 @@ export function ClauseJobWorkspace() {
                 files: filesToSend,
               }),
           });
-          if (evaluated.status === "needs-connection") {
+          if (isNothingSentResult(evaluated)) {
             setProofOfflineNotice(evaluated.message);
             toast.error(evaluated.message);
             return null;
           }
           if (evaluated.status === "fallback") {
-            if (isFirebaseConfigured() && evaluated.reason !== "missing-evidence-kinds") {
-              toast.message("Browser proof check unavailable; evaluating on the server.");
+            if (evaluated.reason !== "missing-evidence-kinds") {
+              serverFallbackToast("Browser proof check unavailable; evaluating on the server.");
             }
             return evaluated.fallback;
           }
@@ -583,6 +662,12 @@ export function ClauseJobWorkspace() {
         if (isNavigatorOffline()) {
           setProofOfflineNotice(NEEDS_CONNECTION_MESSAGE);
           toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
+        if (isStrictOnDevice("evidence")) {
+          // Strict private mode: no browser path for this input, and the server is not an option.
+          setProofOfflineNotice(ON_DEVICE_FAILED_MESSAGE);
+          toast.error(ON_DEVICE_FAILED_MESSAGE);
           return null;
         }
 
@@ -655,15 +740,13 @@ export function ClauseJobWorkspace() {
                   : { jobId: activeJobId, useSample: true },
               ),
           });
-          if (drafted.status === "needs-connection") {
+          if (isNothingSentResult(drafted)) {
             setCoOfflineNotice(drafted.message);
             toast.error(drafted.message);
             return null;
           }
           if (drafted.status === "fallback") {
-            if (isFirebaseConfigured()) {
-              toast.message("Browser change-order draft unavailable; drafting on the server.");
-            }
+            serverFallbackToast("Browser change-order draft unavailable; drafting on the server.");
             return drafted.fallback;
           }
           toast.message(formatAiSource(drafted.ai));
@@ -677,6 +760,12 @@ export function ClauseJobWorkspace() {
         if (isNavigatorOffline()) {
           setCoOfflineNotice(NEEDS_CONNECTION_MESSAGE);
           toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
+        if (isStrictOnDevice("changeOrder")) {
+          // Strict private mode: no browser path for this input, and the server is not an option.
+          setCoOfflineNotice(ON_DEVICE_FAILED_MESSAGE);
+          toast.error(ON_DEVICE_FAILED_MESSAGE);
           return null;
         }
 
@@ -739,15 +828,13 @@ export function ClauseJobWorkspace() {
                   : { jobId: activeJobId, useSample: true },
               ),
           });
-          if (explained.status === "needs-connection") {
+          if (isNothingSentResult(explained)) {
             setExceptionOfflineNotice(explained.message);
             toast.error(explained.message);
             return null;
           }
           if (explained.status === "fallback") {
-            if (isFirebaseConfigured()) {
-              toast.message("On-device explanation unavailable; evaluating on the server.");
-            }
+            serverFallbackToast("On-device explanation unavailable; evaluating on the server.");
             return explained.fallback;
           }
           toast.message(formatAiSource(explained.ai));
@@ -762,6 +849,12 @@ export function ClauseJobWorkspace() {
         if (isNavigatorOffline()) {
           setExceptionOfflineNotice(NEEDS_CONNECTION_MESSAGE);
           toast.error(NEEDS_CONNECTION_MESSAGE);
+          return null;
+        }
+        if (isStrictOnDevice("exception")) {
+          // Strict private mode: no browser path for this input, and the server is not an option.
+          setExceptionOfflineNotice(ON_DEVICE_FAILED_MESSAGE);
+          toast.error(ON_DEVICE_FAILED_MESSAGE);
           return null;
         }
 
@@ -1090,9 +1183,12 @@ export function ClauseJobWorkspace() {
               <span className="hidden sm:inline">Sandbox</span>
             </Button>
 
-            <div className="hidden md:block">
-              <AgentToggleButton />
-            </div>
+            {/* Contest mode: the chat would call a model outside Firebase AI Logic, so it is hidden (and refused server-side). */}
+            {runtime?.contestMode ? null : (
+              <div className="hidden md:block">
+                <AgentToggleButton />
+              </div>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1153,12 +1249,22 @@ export function ClauseJobWorkspace() {
                 ) : null}
 
                 <DropdownMenuItem
-                  onSelect={() => navigate("/chat")}
+                  onSelect={() => privacyMode.setMode(privacyMode.mode === "strict" ? "hybrid" : "strict")}
                   className="text-xs"
+                  data-testid="toggle-strict-on-device"
                 >
-                  <IconMessageChatbot className="size-3.5" />
-                  Open Clause chat
+                  <IconLock className="size-3.5" />
+                  {privacyMode.mode === "strict" ? "Strict on-device: on" : "Strict on-device: off"}
                 </DropdownMenuItem>
+                {runtime?.contestMode ? null : (
+                  <DropdownMenuItem
+                    onSelect={() => navigate("/chat")}
+                    className="text-xs"
+                  >
+                    <IconMessageChatbot className="size-3.5" />
+                    Open Clause chat
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onSelect={() => navigate("/settings")}
                   className="text-xs"
@@ -1181,11 +1287,21 @@ export function ClauseJobWorkspace() {
           onQuoteTextChange={(next) => {
             setQuoteText(next);
             if (parseOfflineNotice) setParseOfflineNotice(null);
+            if (localDraft) setLocalDraft(null);
           }}
           onParse={() => void handleParseQuote()}
           busy={Boolean(busyLabel)}
           dialogOpen={newJobOpen}
           offlineNotice={parseOfflineNotice}
+          noticeActions={
+            <OnDeviceNoticeActions
+              notice={parseOfflineNotice}
+              privacyMode={privacyMode}
+              canSaveDraft={Boolean(localDraft)}
+              onSaveDraft={() => void handleSaveLocalDraft()}
+              onModeChanged={() => setParseOfflineNotice(null)}
+            />
+          }
         />
       ) : (
         <>
@@ -1321,10 +1437,20 @@ export function ClauseJobWorkspace() {
         onQuoteTextChange={(next) => {
           setQuoteText(next);
           if (parseOfflineNotice) setParseOfflineNotice(null);
+          if (localDraft) setLocalDraft(null);
         }}
         onParse={() => void handleParseQuote()}
         busy={Boolean(busyLabel)}
         offlineNotice={parseOfflineNotice}
+        noticeActions={
+          <OnDeviceNoticeActions
+            notice={parseOfflineNotice}
+            privacyMode={privacyMode}
+            canSaveDraft={Boolean(localDraft)}
+            onSaveDraft={() => void handleSaveLocalDraft()}
+            onModeChanged={() => setParseOfflineNotice(null)}
+          />
+        }
       />
 
       <SandboxToolsDrawer

@@ -16,6 +16,7 @@ import {
   type HybridMode,
   isNavigatorOffline,
   needsConnectionOffline,
+  strictOnDeviceBlock,
 } from "../hybrid-ai";
 
 export interface DeclineFacts {
@@ -106,6 +107,8 @@ export async function explainDeclineInBrowser(
 
   // The rule result is already on the device, so offline we just show it. Nothing is sent.
   if (await needsConnectionOffline(mode)) return fallback("needs-connection");
+  // Strict private mode without a ready local model: show the card rules' own text. Nothing is sent.
+  if (await strictOnDeviceBlock(mode)) return fallback("on-device-unavailable");
   if (!opts.ai && !isFirebaseConfigured()) return fallback("firebase-unavailable");
 
   const effectiveMode: HybridMode = isNavigatorOffline() && !opts.ai ? "only_on_device" : mode;

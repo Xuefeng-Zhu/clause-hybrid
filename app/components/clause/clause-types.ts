@@ -256,6 +256,8 @@ export interface RuntimeInfo {
   airwallexMode: "mock" | "sandbox" | string;
   airwallexBaseUrl: string;
   model: string;
+  /** CLAUSE_CONTEST_MODE on the server: no direct model provider; gen AI only via Firebase AI Logic. */
+  contestMode?: boolean;
 }
 
 export interface UploadableProofFile {

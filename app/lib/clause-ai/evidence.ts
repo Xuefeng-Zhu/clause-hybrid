@@ -1,7 +1,8 @@
 /**
  * Browser-side milestone evidence evaluation via Firebase AI Logic hybrid inference.
  * Image inputs are downscaled in the browser to a single JPEG (max 768px) and evaluated
- * single-turn (default mode PREFER_IN_CLOUD). Deterministic code checks missing evidence kinds
+ * single-turn (default mode PREFER_IN_CLOUD). PDF proof is sent inline to cloud Gemini through
+ * Firebase AI Logic (ONLY_IN_CLOUD); strict on-device mode refuses PDFs and sends nothing. Deterministic code checks missing evidence kinds
  * upfront before any model call and hashes the original files for release binding.
  */
 import type { AI } from "firebase/ai";
@@ -27,6 +28,9 @@ import {
   needsConnectionOffline,
   needsConnectionResult,
   type NeedsConnectionResult,
+  type NothingSentResult,
+  onDeviceFailedResult,
+  strictOnDeviceBlock,
 } from "../hybrid-ai";
 
 export const MAX_EVIDENCE_IMAGE_DIM = 768;
@@ -63,7 +67,8 @@ export type EvaluateEvidenceResult<TFallback = unknown> =
   | {
       status: "ok";
       verdict: EvidenceVerdict;
-      image: DownscaledEvidenceJpeg;
+      /** The downscaled JPEG the model saw; absent for a PDF-only batch. */
+      image?: DownscaledEvidenceJpeg;
       ai: EvaluateEvidenceAiInfo;
     }
   | {
@@ -71,7 +76,8 @@ export type EvaluateEvidenceResult<TFallback = unknown> =
       fallback: TFallback;
       reason: string;
     }
-  | NeedsConnectionResult;
+  | NeedsConnectionResult
+  | NothingSentResult;
 
 export function chooseEvidenceMode(): HybridMode {
   return getRemoteConfigStepMode("evidence");
@@ -163,9 +169,20 @@ export async function evaluateEvidenceInBrowser<TFallback = unknown>(
     return needsConnectionResult();
   }
 
+  // Strict private mode: unless the on-device model is ready, stop here. No SDK call, no server.
+  const strictBlock = await strictOnDeviceBlock(mode);
+  if (strictBlock) return strictBlock;
+  const strict = mode === "only_on_device";
+
   const runFallback = async (reason: string): Promise<EvaluateEvidenceResult<TFallback>> => {
     if (isNavigatorOffline()) {
       return needsConnectionResult();
+    }
+    // Strict mode never hands the document to the server (or any other model) after a failure.
+    if (strict) {
+      return reason === "missing-evidence-kinds"
+        ? onDeviceFailedResult(reason, "This proof is missing a required file for the milestone. Nothing was sent.")
+        : onDeviceFailedResult(reason);
     }
     const fallback = opts.serverFallback ? await opts.serverFallback() : (undefined as TFallback);
     return { status: "fallback", fallback, reason };
@@ -182,12 +199,22 @@ export async function evaluateEvidenceInBrowser<TFallback = unknown>(
     return runFallback(`unreadable-evidence-file: ${unreadable.filename}`);
   }
 
-  // Only pure image proof batches are resized to a single JPEG in the browser; PDFs route to server.
-  const hasPdf = files.some((f) => f.mediaType === "application/pdf");
+  // Images are downscaled to one JPEG in the browser. PDFs go inline to cloud Gemini through
+  // Firebase AI Logic (the on-device model can't read PDFs); never to a server model.
+  const pdfs = files.filter((f) => f.mediaType === "application/pdf");
   const primaryImage = files.find(
     (f) => f.mediaType === "image/jpeg" || f.mediaType === "image/png",
   );
-  if (hasPdf || !primaryImage) {
+  if (pdfs.length && strict) {
+    return onDeviceFailedResult(
+      "pdf-needs-cloud",
+      "The on-device model can't read PDF proof. Nothing was sent.",
+    );
+  }
+  if (pdfs.length && offline) {
+    return needsConnectionResult();
+  }
+  if (!pdfs.length && !primaryImage) {
     return runFallback("non-image-evidence");
   }
 
@@ -196,23 +223,32 @@ export async function evaluateEvidenceInBrowser<TFallback = unknown>(
     return runFallback("firebase-unavailable");
   }
 
-  let downscaled: DownscaledEvidenceJpeg;
-  try {
-    downscaled = opts.downscale
-      ? await opts.downscale(primaryImage)
-      : await downscaleImageToJpeg(primaryImage);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "image-downscale-failed";
-    return runFallback(`image-downscale-failed: ${msg}`);
+  let downscaled: DownscaledEvidenceJpeg | undefined;
+  if (primaryImage) {
+    try {
+      downscaled = opts.downscale
+        ? await opts.downscale(primaryImage)
+        : await downscaleImageToJpeg(primaryImage);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "image-downscale-failed";
+      return runFallback(`image-downscale-failed: ${msg}`);
+    }
   }
 
-  const effectiveMode: HybridMode = offline && !opts.ai ? "only_on_device" : mode;
+  const effectiveMode: HybridMode = pdfs.length
+    ? "only_in_cloud"
+    : offline && !opts.ai
+      ? "only_on_device"
+      : mode;
 
   try {
     const r = await hybridGenerate({
       system: EVIDENCE_SYSTEM,
       prompt: evidencePrompt(milestone, files),
-      image: { mimeType: "image/jpeg", base64: downscaled.base64 },
+      ...(downscaled ? { image: { mimeType: "image/jpeg" as const, base64: downscaled.base64 } } : {}),
+      ...(pdfs.length
+        ? { files: pdfs.map((f) => ({ mimeType: "application/pdf" as const, base64: f.base64 })) }
+        : {}),
       schema: EvidenceVerdict,
       step: "evidence",
       mode: effectiveMode,
@@ -234,7 +270,7 @@ export async function evaluateEvidenceInBrowser<TFallback = unknown>(
     return {
       status: "ok",
       verdict: validation.verdict,
-      image: downscaled,
+      ...(downscaled ? { image: downscaled } : {}),
       ai: { source: r.source, model: r.model, ms: r.ms },
     };
   } catch (err) {

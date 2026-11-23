@@ -24,6 +24,9 @@ import {
   needsConnectionOffline,
   needsConnectionResult,
   type NeedsConnectionResult,
+  type NothingSentResult,
+  onDeviceFailedResult,
+  strictOnDeviceBlock,
 } from "../hybrid-ai";
 
 export interface ParseExpenseAiInfo {
@@ -52,15 +55,17 @@ export type ParseExpenseResult<TFallback = unknown> =
       fallback: TFallback;
       reason: string;
     }
-  | NeedsConnectionResult;
+  | NeedsConnectionResult
+  | NothingSentResult;
 
 export function chooseExpenseMode(
   text: string,
-  threshold = getRemoteConfigThreshold(),
+  threshold?: number,
   configuredMode = getRemoteConfigStepMode("expense"),
 ): HybridMode {
   if (configuredMode !== "prefer_on_device") return configuredMode;
-  return text.length > threshold ? "prefer_in_cloud" : configuredMode;
+  // Read the threshold only when it matters (it initializes Firebase / Remote Config).
+  return text.length > (threshold ?? getRemoteConfigThreshold()) ? "prefer_in_cloud" : configuredMode;
 }
 
 export async function parseExpenseInBrowser<TFallback = unknown>(
@@ -75,12 +80,19 @@ export async function parseExpenseInBrowser<TFallback = unknown>(
     return needsConnectionResult();
   }
 
+  // Strict private mode: unless the on-device model is ready, stop here. No SDK call, no server.
+  const strictBlock = await strictOnDeviceBlock(mode);
+  if (strictBlock) return strictBlock;
+  const strict = mode === "only_on_device";
+
   const available = Boolean(opts.ai) || isFirebaseConfigured();
 
   const runFallback = async (reason: string): Promise<ParseExpenseResult<TFallback>> => {
     if (isNavigatorOffline()) {
       return needsConnectionResult();
     }
+    // Strict mode never hands the document to the server (or any other model) after a failure.
+    if (strict) return onDeviceFailedResult(reason);
     const fallback = opts.serverFallback ? await opts.serverFallback() : (undefined as TFallback);
     return { status: "fallback", kind: "fallback", fallback, reason };
   };

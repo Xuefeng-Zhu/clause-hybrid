@@ -34,10 +34,17 @@ export interface HybridImageInput {
   base64: string;
 }
 
+/** Extra inline files (e.g. PDF proof). Cloud only: Chrome's on-device model can't read PDFs. */
+export interface HybridFileInput {
+  mimeType: "image/jpeg" | "image/png" | "application/pdf";
+  base64: string;
+}
+
 export interface HybridRequest<S extends z.ZodTypeAny> {
   system: string;
   prompt: string;
   image?: HybridImageInput;
+  files?: HybridFileInput[];
   schema: S;
   step?: AiStep;
   mode?: HybridMode;
@@ -61,6 +68,61 @@ export function needsConnectionResult(): NeedsConnectionResult {
     kind: "needs-connection",
     message: NEEDS_CONNECTION_MESSAGE,
   };
+}
+
+export const ON_DEVICE_UNAVAILABLE_MESSAGE = "On-device model not available. Nothing was sent.";
+export const ON_DEVICE_FAILED_MESSAGE = "The on-device model couldn't read this. Nothing was sent.";
+
+/**
+ * Strict private mode (ONLY_ON_DEVICE) refused to run, or ran and failed. Either way nothing left
+ * the browser: no Firebase AI Logic call and no Clause server fallback.
+ */
+export interface NothingSentResult {
+  status: "on-device-unavailable" | "on-device-failed";
+  kind: "on-device-unavailable" | "on-device-failed";
+  message: string;
+  availability?: OnDeviceAvailability;
+  reason?: string;
+}
+
+export function onDeviceUnavailableResult(availability: OnDeviceAvailability): NothingSentResult {
+  return {
+    status: "on-device-unavailable",
+    kind: "on-device-unavailable",
+    message: ON_DEVICE_UNAVAILABLE_MESSAGE,
+    availability,
+  };
+}
+
+export function onDeviceFailedResult(reason?: string, message = ON_DEVICE_FAILED_MESSAGE): NothingSentResult {
+  return { status: "on-device-failed", kind: "on-device-failed", message, ...(reason ? { reason } : {}) };
+}
+
+/** Any result where the browser stopped before sending anything (offline, or strict on-device). */
+export function isNothingSentResult(r: unknown): r is NeedsConnectionResult | NothingSentResult {
+  const status = (r as { status?: unknown } | null | undefined)?.status;
+  return status === "needs-connection" || status === "on-device-unavailable" || status === "on-device-failed";
+}
+
+/**
+ * Strict on-device gate. Call before touching the SDK. In ONLY_ON_DEVICE mode, unless Chrome's
+ * LanguageModel says "available" right now, nothing may be sent: the Web SDK would otherwise pick
+ * the cloud when its Chrome adapter is missing, and callers would fall back to the server.
+ */
+export async function strictOnDeviceBlock(mode: HybridMode): Promise<NothingSentResult | null> {
+  if (mode !== "only_on_device") return null;
+  const availability = await onDeviceAvailability();
+  return availability === "available" ? null : onDeviceUnavailableResult(availability);
+}
+
+/** Thrown by hybridGenerate itself if a caller skipped strictOnDeviceBlock. Nothing was sent. */
+export class OnDeviceUnavailableError extends Error {
+  readonly availability: OnDeviceAvailability;
+  constructor(availability: OnDeviceAvailability) {
+    super(ON_DEVICE_UNAVAILABLE_MESSAGE);
+    this.name = "OnDeviceUnavailableError";
+    this.availability = availability;
+  }
 }
 
 export function isNavigatorOffline(): boolean {
@@ -147,8 +209,18 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
     (req.step
       ? getRemoteConfigStepMode(req.step)
       : (getRemoteConfigString("parse_mode", "prefer_on_device") as HybridMode));
+  // Strict private mode: refuse before the SDK (or Remote Config) is touched, so nothing can reach the cloud.
+  if (mode === "only_on_device") {
+    const availability = await onDeviceAvailability();
+    if (availability !== "available") throw new OnDeviceUnavailableError(availability);
+    if (req.files?.some((f) => f.mimeType === "application/pdf")) {
+      throw new OnDeviceUnavailableError("unsupported");
+    }
+  }
+
   const cloudModel = req.cloudModel ?? getRemoteConfigString("cloud_model", getDefaultCloudModel());
   const jsonSchema = toModelJsonSchema(req.schema);
+
   const ai = req.ai ?? getFirebaseAI();
 
   const model = getGenerativeModel(ai, {
@@ -174,13 +246,16 @@ export async function hybridGenerate<S extends z.ZodTypeAny>(
   });
 
   const started = now();
-  const content: string | Part[] = req.image
+  const inline = [
+    ...(req.image ? [req.image] : []),
+    ...(req.files ?? []),
+  ];
+  const content: string | Part[] = inline.length
     ? [
         { type: "text", text: req.prompt },
-        {
-          type: "inlineData",
-          inlineData: { mimeType: req.image.mimeType, data: req.image.base64 },
-        },
+        ...inline.map(
+          (f): Part => ({ type: "inlineData", inlineData: { mimeType: f.mimeType, data: f.base64 } }) as Part,
+        ),
       ]
     : req.prompt;
   const result = await model.generateContent(content);

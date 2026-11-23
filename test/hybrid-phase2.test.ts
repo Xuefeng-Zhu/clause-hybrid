@@ -702,7 +702,7 @@ describe("evidence downscaling, validator, and evaluateEvidenceInBrowser", () =>
     ).toBe(false);
   });
 
-  it("evaluates single-turn downscaled JPEG in browser with PREFER_IN_CLOUD default and falls back on PDF/missing kinds/failure", async () => {
+  it("evaluates single-turn downscaled JPEG in browser with PREFER_IN_CLOUD default sends PDFs to cloud via AI Logic, and falls back on missing kinds/failure", async () => {
     expect(chooseEvidenceMode()).toBe("prefer_in_cloud");
     const downscale = vi.fn(async () => ({
       mimeType: "image/jpeg" as const,
@@ -778,21 +778,31 @@ describe("evidence downscaling, validator, and evaluateEvidenceInBrowser", () =>
     expect(job.pending?.kind).toBe("release_milestone");
     expect(job.pending?.aiSource).toEqual(res.ai);
 
-    // PDF proof routes cleanly to serverFallback without calling hybrid AI
-    const prevCalls = generateContent.mock.calls.length;
+    // PDF proof goes inline to cloud Gemini through Firebase AI Logic (ONLY_IN_CLOUD), never the server
+    mockReply(
+      JSON.stringify({
+        verdict: "meets",
+        reasoning: "Inspection report covers M2.",
+        observed: ["Signed inspection report"],
+        missing: [],
+      }),
+      "in_cloud",
+    );
     const pdfRes = await evaluateEvidenceInBrowser(
       m2,
       [{ filename: "report.pdf", mediaType: "application/pdf", base64: validBase64, declaredKind: "photos" }],
       { downscale, serverFallback },
     );
-    expect(pdfRes.status).toBe("fallback");
-    expect(generateContent.mock.calls.length).toBe(prevCalls);
-    expect(serverFallback).toHaveBeenCalledTimes(1);
+    expect(pdfRes.status).toBe("ok");
+    expect(getGenerativeModel.mock.calls.at(-1)![1]).toMatchObject({ mode: "only_in_cloud" });
+    const pdfContent = generateContent.mock.calls.at(-1)![0] as Array<Record<string, any>>;
+    expect(pdfContent.some((p) => p.inlineData?.mimeType === "application/pdf")).toBe(true);
+    expect(serverFallback).not.toHaveBeenCalled();
 
     // Offline without on-device returns needs-connection and never sends image or hits server
     stubBrowserEnv({ online: false, lmAvailability: "unavailable" });
     const offline = await evaluateEvidenceInBrowser(m2, [photoFile], { downscale, serverFallback });
     expect(offline.status).toBe("needs-connection");
-    expect(serverFallback).toHaveBeenCalledTimes(1);
+    expect(serverFallback).not.toHaveBeenCalled();
   });
 });

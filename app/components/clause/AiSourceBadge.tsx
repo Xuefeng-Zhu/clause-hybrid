@@ -3,6 +3,8 @@ import { IconCloud, IconDeviceLaptop, IconListCheck, IconServer } from "@tabler/
 import { formatAiSource, type AiSourceDisplay } from "@/lib/hybrid-ai";
 import { cn } from "@/lib/utils";
 
+import { usePrivacyMode } from "./PrivacyModeControls";
+
 export type AiSourceInfo = AiSourceDisplay;
 
 const STYLES = {
@@ -23,7 +25,7 @@ const STYLES = {
   },
   offline: {
     Icon: IconListCheck,
-    title: "No model ran: the server used its offline rules for the bundled sample.",
+    title: "No model ran: the server used its deterministic offline rules for the bundled sample.",
     cls: "border-stone-300 bg-stone-100 text-stone-700",
   },
 } as const;
@@ -50,15 +52,27 @@ export function AiSourceBadge({ info, className }: { info: AiSourceInfo; classNa
   );
 }
 
-/** Plain statement of what the server receives when the browser parses a document. */
+/** Plain statement of what leaves the browser in the current mode. */
 export function WhatLeavesThisDevice({ className }: { className?: string }) {
+  const { mode } = usePrivacyMode();
+  if (mode === "strict") {
+    return (
+      <p className={cn("text-[11px] leading-relaxed text-stone-500", className)} data-testid="what-leaves-strict">
+        <span className="font-medium text-stone-700">Strict on-device mode:</span> the document is read only by
+        Gemini Nano in this browser. It is never sent to Firebase AI Logic or the Clause server for reading, even if
+        something fails; if the local model isn&rsquo;t ready you&rsquo;ll see &ldquo;Nothing was sent.&rdquo; Only the
+        structured terms go to Clause when the job is created. Turn it off in the account menu.
+      </p>
+    );
+  }
   return (
     <p className={cn("text-[11px] leading-relaxed text-stone-500", className)}>
       <span className="font-medium text-stone-700">What leaves this device:</span> only the structured terms
       (amounts, dates, milestones and the quoted clauses) after you choose to create the job. The full document is
-      read on-device by Gemini Nano when your browser supports it; long documents or unsupported browsers use cloud
-      Gemini through Firebase AI Logic. If neither is reachable from your browser, the text goes to the Clause server,
-      which reads it with Gemini. The badge says which ran: On-device, Cloud, Server, or Offline rules.
+      read on-device by Gemini Nano when your browser supports it; long documents or unsupported browsers send it to
+      cloud Gemini through Firebase AI Logic. If neither can run, the text goes to the Clause server: in contest mode
+      it only applies offline rules (no model runs); otherwise it reads it with its own Gemini key. The badge says
+      which ran: On-device, Cloud, Server, or Offline rules.
     </p>
   );
 }

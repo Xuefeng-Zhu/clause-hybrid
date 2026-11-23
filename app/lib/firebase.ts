@@ -233,10 +233,53 @@ export function getRemoteConfigString(key: string, fallback: string): string {
   }
 }
 
+/**
+ * Strict private mode, chosen by the user on this device (Settings menu or `?ai=strict`). It forces
+ * ONLY_ON_DEVICE for every AI step: nothing is sent to Firebase AI Logic or the Clause server for
+ * inference, and if Chrome's on-device model isn't ready the step stops with "Nothing was sent."
+ */
+export const PRIVACY_MODE_STORAGE_KEY = "clause.privacyMode";
+export const PRIVACY_MODE_EVENT = "clause:privacy-mode";
+export type PrivacyMode = "hybrid" | "strict";
+
+function localStore(): Storage | undefined {
+  try {
+    return typeof window !== "undefined" && window.localStorage ? window.localStorage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function getLocalPrivacyMode(): PrivacyMode {
+  try {
+    return localStore()?.getItem(PRIVACY_MODE_STORAGE_KEY) === "strict" ? "strict" : "hybrid";
+  } catch {
+    return "hybrid";
+  }
+}
+
+export function setLocalPrivacyMode(mode: PrivacyMode): void {
+  const ls = localStore();
+  if (!ls) return;
+  try {
+    if (mode === "strict") ls.setItem(PRIVACY_MODE_STORAGE_KEY, "strict");
+    else ls.removeItem(PRIVACY_MODE_STORAGE_KEY);
+    window.dispatchEvent?.(new Event(PRIVACY_MODE_EVENT));
+  } catch {
+    // Storage blocked: the mode simply doesn't persist.
+  }
+}
+
+/** True when this step runs ONLY_ON_DEVICE (local strict mode or Remote Config). */
+export function isStrictOnDevice(step: AiStep): boolean {
+  return getRemoteConfigStepMode(step) === "only_on_device";
+}
+
 export function getRemoteConfigStepMode(
   step: AiStep,
   fallback: HybridMode = DEFAULT_STEP_MODES[step],
 ): HybridMode {
+  if (getLocalPrivacyMode() === "strict") return "only_on_device";
   const raw = getRemoteConfigString(STEP_MODE_KEYS[step], fallback);
   if (VALID_HYBRID_MODES.has(raw as HybridMode)) {
     return raw as HybridMode;
