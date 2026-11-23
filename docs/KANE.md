@@ -13,10 +13,10 @@ Clause Hybrid lets AI read contracts, receipts, change orders and proof photos, 
 
 | # | Flow | What Kane asserts |
 |---|------|-------------------|
-| 01 | Quote → terms | $12,000 contract, $4K/$5K/$3K milestones, Dec 18 2026 deadline, source badge, `Released $4,000` |
+| 01 | Quote → terms | $12,000 contract, $4K/$5K/$3K milestones, Dec 18 2026 deadline, source badge (`Cloud ·`, `On-device ·`, `Server ·` or `Offline rules`), `Released $4,000` |
 | 02 | Over-limit charge → Explain | `$6,000 Declined — Over released limit §1.1`, inline explanation, `Nothing was paid. Card rules decided this, not AI.`, no funds released |
-| 03 | Change order | `$12,000 → $13,500 (+$1,500)`, deadline Dec 23, waits on Approve/Reject, totals unchanged |
-| 04 | Rejected proof photo | `Doesn't meet requirements`, `Proof rejected`, `Held $5,000`, `$5,000 stays locked` |
+| 03 | Change order (sample email: in-stock quartz, +$800 on Milestone 2) | `$12,000 → $12,800 (+$800)`, deadline Dec 18 → Dec 23, source badge, waits on Approve/Reject, totals unchanged |
+| 04 | Rejected proof photo | `Doesn’t meet requirements` (either apostrophe accepted), source badge, `Proof rejected`, `Held $5,000`, `$5,000 stays locked` |
 | 05 | Offline | `Needs a connection. Nothing was sent.` (manual CDP check: kane-cli 0.10.4 has no network emulation) |
 
 ## What Kane caught (Nov 15–16, 2026)
