@@ -19,7 +19,7 @@ Clause Hybrid lets AI read contracts, receipts, change orders and proof photos, 
 | 04 | Rejected proof photo | `Doesn’t meet requirements` (either apostrophe accepted), source badge, `Proof rejected`, `Held $5,000`, `$5,000 stays locked` |
 | 05 | Offline | `Needs a connection. Nothing was sent.` (manual CDP check: kane-cli 0.10.4 has no network emulation) |
 
-## What Kane caught (Nov 15–16, 2026)
+## What Kane caught (Nov 15–23, 2026)
 
 **Run 1, hosted preview (Nov 15):** flows 01, 03 and 04 passed. Kane found:
 
@@ -33,6 +33,13 @@ Clause Hybrid lets AI read contracts, receipts, change orders and proof photos, 
 - Four new Vitest tests; 75/75 pass.
 
 **Run 2, after the fix (Nov 16):** flows 02 and 04 **passed** on the first attempt: red → green. This run used a local build with offline AI fixtures, so the explanation came from the card-rule fallback (`From the card rules`).
+
+**Run 3, live-Gemini preview (Nov 23):** the first run against the Cloud Run preview with a real `GEMINI_API_KEY` (Runs 1–2 used offline fixtures). In Kane's headless Chrome, App Check rejected the browser's Firebase AI Logic call (`AppCheck: 403`, then a 24 h throttle), so the server did the work with Gemini. The fallback worked, but:
+
+- **Medium:** the quote review, the change-order impact dialog and the proof verdict showed **no source badge** for server output, although the UI says "the badge says which ran".
+- **Low (spec):** flow 03 expected an LED +$1,500 email, but `Use sample email` loads the quartz +$800 email. Flow 04 failed on a straight vs curly apostrophe.
+
+**Fix (Nov 23):** server AI steps now return their model, latency and `parsedBy`, and the UI badges them `Server · <model> · <latency>`, or `Offline rules` when the offline fixture ran. Flow 03 now matches the quartz sample, and the app uses one apostrophe style. For the verification run, the test browser (only) got the App Check debug token, so Kane exercised the browser AI Logic path: flow 01 **passed** with `Cloud · gemini-3.5-flash-lite · 3.2 s`. Server-path output on the same preview now shows `Server · gemini-3.8-flash · 2.7 s` (checked over CDP, not Kane).
 
 ## Running it yourself
 
