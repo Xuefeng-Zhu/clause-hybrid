@@ -1,4 +1,5 @@
 import type { DeclaredProofKind } from "@/lib/clause-samples";
+import type { AiSourceDisplay } from "@/lib/hybrid-ai";
 
 export interface ClauseRef {
   clause_id: string;
@@ -165,7 +166,7 @@ export interface PendingApproval {
   verdict?: EvidenceVerdict;
   change_order?: ChangeOrderProposal;
   exception?: ExceptionProposal;
-  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number };
+  aiSource?: AiSourceDisplay;
   created_at: string;
 }
 
@@ -247,7 +248,7 @@ export interface JobSummary {
   pending: PendingApproval | null;
   problems: string[];
   parsedBy: string;
-  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number } | null;
+  aiSource?: AiSourceDisplay | null;
   mccNames?: Record<string, string>;
 }
 

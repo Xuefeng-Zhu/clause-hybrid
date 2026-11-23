@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { config } from "../config.js";
-import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
+import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
 import { ContractTerms, validateTerms } from "./schema.js";
 import { SAMPLE_TERMS } from "../fixtures.js";
 
@@ -13,6 +13,8 @@ export interface ParseResult {
   terms: ContractTerms;
   problems: string[]; // deterministic validation issues; non-empty blocks card issuance
   parsedBy: "gemini" | "claude" | "offline-fixture";
+  /** Server provenance for the UI badge: live model + latency, or offline fixture. */
+  aiSource: ServerAiSource;
 }
 
 const SYSTEM = `You extract payment terms from a contractor quote or email thread for a small business.
@@ -30,11 +32,22 @@ const TERMS_TOOL_SCHEMA = z.toJSONSchema(ContractTerms, { target: "draft-7" }) a
 
 export async function parseContract(src: ContractSource): Promise<ParseResult> {
   if (!llmProvider()) {
+    const started = Date.now();
     const terms = await parseOffline(src);
-    return { terms, problems: validateTerms(terms), parsedBy: "offline-fixture" };
+    return {
+      terms,
+      problems: validateTerms(terms),
+      parsedBy: "offline-fixture",
+      aiSource: serverAiSource(true, Date.now() - started),
+    };
   }
-  const { value: terms, usedFallback } = await withOfflineFallback(() => parseWithClaude(src), () => parseOffline(src));
-  return { terms, problems: validateTerms(terms), parsedBy: usedFallback ? "offline-fixture" : llmProvider()! };
+  const { value: terms, usedFallback, ms } = await withOfflineFallback(() => parseWithClaude(src), () => parseOffline(src));
+  return {
+    terms,
+    problems: validateTerms(terms),
+    parsedBy: usedFallback ? "offline-fixture" : llmProvider()!,
+    aiSource: serverAiSource(usedFallback, ms),
+  };
 }
 
 async function parseWithClaude(src: ContractSource): Promise<ContractTerms> {

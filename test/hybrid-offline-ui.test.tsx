@@ -16,6 +16,8 @@ vi.mock("@tabler/icons-react", () => {
     "IconCloud",
     "IconCreditCard",
     "IconDeviceLaptop",
+    "IconListCheck",
+    "IconServer",
     "IconFileDiff",
     "IconFileCheck",
     "IconFileText",
@@ -31,6 +33,7 @@ vi.mock("@tabler/icons-react", () => {
 });
 
 import { ActionBar } from "../app/components/clause/ActionBar";
+import { AiSourceBadge } from "../app/components/clause/AiSourceBadge";
 import { ContractorPhone } from "../app/components/clause/ContractorPhone";
 import { EmptyJobState } from "../app/components/clause/NewJobDialog";
 import type { ClauseJob, JobSummary } from "../app/components/clause/clause-types";
@@ -246,6 +249,71 @@ describe("offline needs-connection UI notices", () => {
 
     const badge = document.querySelector("[data-testid='ai-source-badge']");
     expect(badge?.textContent).toContain("Cloud · gemini-3.5-flash-lite · 1.2 s");
+  });
+
+  it("badges a server-drafted change order (browser AI unavailable) instead of showing nothing", async () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const savedGemini = config.gemini.apiKey;
+    config.anthropic.apiKey = undefined;
+    config.gemini.apiKey = undefined;
+    const svc = new ContractCardService(new MockIssuingGateway(), new MemoryJobStore(), "owner@example.com");
+    let contractJob = await svc.createJob({ kind: "text", text: SAMPLES.quote });
+    contractJob = await svc.approveTerms(contractJob.id);
+    contractJob = await svc.proposeChangeOrder(contractJob.id, SAMPLES.changeOrderEmail);
+    config.gemini.apiKey = savedGemini;
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(ActionBar, {
+          job: contractJob as unknown as ClauseJob,
+          summary: summarize(contractJob) as unknown as JobSummary,
+          busyLabel: null,
+          onCancelBusy: () => {},
+          onApproveTerms: () => {},
+          proofSheetOpen: false,
+          onProofSheetOpenChange: () => {},
+          proofKind: "photos",
+          onProofKindChange: () => {},
+          proofInputRef: createRef<HTMLInputElement>(),
+          stagedProofFiles: [],
+          onStageSelectedFiles: () => {},
+          onRemoveStagedFile: () => {},
+          onSubmitProof: () => {},
+          onApproveRelease: () => {},
+          coSheetOpen: false,
+          onCoSheetOpenChange: () => {},
+          coEmailText: "",
+          onCoEmailTextChange: () => {},
+          onDraftChangeOrder: () => {},
+          onApproveChangeOrder: () => {},
+          onRejectPending: () => {},
+        }),
+      );
+    });
+    const badge = document.querySelector("[data-testid='ai-source-badge']");
+    expect(badge?.textContent).toBe("Offline rules");
+    expect(badge?.getAttribute("data-ai-source")).toBe("offline");
+  });
+
+  it("renders the Server badge for a live server model call", () => {
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(AiSourceBadge, {
+          info: { source: "server", model: "gemini-3.8-flash", ms: 3240, parsedBy: "gemini" },
+        }),
+      );
+    });
+    const badge = document.querySelector("[data-testid='ai-source-badge']");
+    expect(badge?.textContent).toBe("Server · gemini-3.8-flash · 3.2 s");
+    expect(badge?.getAttribute("data-ai-source")).toBe("server");
+    expect(badge?.getAttribute("title")).not.toMatch(/on this device|Firebase AI Logic/);
   });
 
   it("downscales browser evidence images to a single max-768px JPEG via canvas", async () => {

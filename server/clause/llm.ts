@@ -38,18 +38,48 @@ export interface ToolCallRequest {
 export async function withOfflineFallback<T>(
   live: () => Promise<T>,
   offline: () => T | Promise<T>,
-): Promise<{ value: T; usedFallback: boolean }> {
+): Promise<{ value: T; usedFallback: boolean; ms: number }> {
+  const started = Date.now();
   try {
-    return { value: await live(), usedFallback: false };
+    const value = await live();
+    return { value, usedFallback: false, ms: Date.now() - started };
   } catch (err) {
     try {
       const value = await offline();
       console.warn(`[clause] model call failed, using offline fallback: ${(err as Error).message}`);
-      return { value, usedFallback: true };
+      return { value, usedFallback: true, ms: Date.now() - started };
     } catch {
       throw err;
     }
   }
+}
+
+/** Which server path produced an AI result. Never on-device or browser AI Logic. */
+export type ServerParsedBy = "gemini" | "anthropic" | "offline-fixture";
+
+/**
+ * Provenance for AI output produced on the server, so the UI can badge it honestly:
+ * "Server · <model> · <latency>" for a live model call, "Offline rules" for the fixture path.
+ */
+export interface ServerAiSource {
+  source: "server" | "offline";
+  model: string;
+  ms: number;
+  parsedBy: ServerParsedBy;
+}
+
+export function serverAiSource(usedOffline: boolean, ms: number): ServerAiSource {
+  const p = llmProvider();
+  const rounded = Math.max(0, Math.round(ms));
+  if (usedOffline || !p) {
+    return { source: "offline", model: "offline-fixture", ms: rounded, parsedBy: "offline-fixture" };
+  }
+  return {
+    source: "server",
+    model: p === "gemini" ? config.gemini.model : config.anthropic.model,
+    ms: rounded,
+    parsedBy: p === "claude" ? "anthropic" : "gemini",
+  };
 }
 
 export async function callTool(req: ToolCallRequest): Promise<unknown> {

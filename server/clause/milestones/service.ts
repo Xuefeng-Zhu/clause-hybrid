@@ -6,10 +6,10 @@ import {
 } from "../../../shared/clause-ai/validate.js";
 import type { IssuingGateway } from "../airwallex/types.js";
 import { config } from "../config.js";
-import { applyChangeOrder, draftChangeOrder } from "../contract/changeOrder.js";
+import { applyChangeOrder, draftChangeOrderWithSource } from "../contract/changeOrder.js";
 import { parseContract, type ContractSource } from "../contract/parser.js";
 import { ContractTerms, validateTerms } from "../contract/schema.js";
-import { computeValidatedExceptionCap, draftPolicyException, type RawModelException } from "../expense/exception.js";
+import { computeValidatedExceptionCap, draftPolicyExceptionWithSource, type RawModelException } from "../expense/exception.js";
 import { looksLikePolicyDocument, parsePolicy } from "../expense/parser.js";
 import { PolicyTerms, synthesizeContractTermsFromPolicy, validatePolicyTerms } from "../expense/schema.js";
 import { MockMetalRail } from "../metal/mock.js";
@@ -26,8 +26,8 @@ import {
 } from "../metal/types.js";
 import { buildCardPlan, buildPolicyCardPlan, nextMilestone } from "../policy/cardRules.js";
 import { explainDecline, explainPolicyDecline } from "../policy/declineExplainer.js";
-import type { Job, JobEvent, JobStore } from "../store/jobStore.js";
-import { evaluateEvidence, type EvidenceFile } from "./evidence.js";
+import type { AiSourceInfo, Job, JobEvent, JobStore } from "../store/jobStore.js";
+import { evaluateEvidenceWithSource, type EvidenceFile } from "./evidence.js";
 
 /**
  * The agent's state machine. Model output is only ever a *proposal* (terms, verdict, change
@@ -54,7 +54,7 @@ export class ContractCardService {
 
   async createJob(src: ContractSource): Promise<Job> {
     if (looksLikePolicyDocument(src)) {
-      const { policyTerms, problems, parsedBy } = await parsePolicy(src);
+      const { policyTerms, problems, parsedBy, aiSource } = await parsePolicy(src);
       const job: Job = {
         id: `job_${randomUUID().slice(0, 8)}`,
         kind: "policy",
@@ -63,6 +63,7 @@ export class ContractCardService {
         policyTerms,
         problems,
         parsedBy,
+        aiSource,
         releasedMilestoneIds: [],
         rules: [],
         transactions: [],
@@ -76,7 +77,7 @@ export class ContractCardService {
       return await this.store.save(job);
     }
 
-    const { terms, problems, parsedBy } = await parseContract(src);
+    const { terms, problems, parsedBy, aiSource } = await parseContract(src);
     const job: Job = {
       id: `job_${randomUUID().slice(0, 8)}`,
       kind: "contract",
@@ -84,6 +85,7 @@ export class ContractCardService {
       terms,
       problems,
       parsedBy,
+      aiSource,
       releasedMilestoneIds: [],
       rules: [],
       transactions: [],
@@ -317,7 +319,7 @@ export class ContractCardService {
       .reverse()
       .find((t) => t.failure_reason === "LIMIT_EXCEEDED" && t.amount > job.policyTerms!.per_charge_cap.amount);
 
-    const proposal = await draftPolicyException(job.policyTerms, note, {
+    const { proposal, aiSource: serverSource } = await draftPolicyExceptionWithSource(job.policyTerms, note, {
       ...(lastDeclined ? { requestedCharge: lastDeclined.amount } : {}),
       ...(opts.requestedCap !== undefined ? { requestedCap: opts.requestedCap } : {}),
       ...(opts.extraction ? { extraction: opts.extraction } : {}),
@@ -329,12 +331,11 @@ export class ContractCardService {
       amount: proposal.one_time_cap,
       currency: job.policyTerms.currency,
       exception: proposal,
-      ...(opts.aiSource ? { aiSource: opts.aiSource } : {}),
+      ...(opts.aiSource ? { aiSource: opts.aiSource } : serverSource ? { aiSource: serverSource } : {}),
       created_at: new Date().toISOString(),
     };
-    const via = opts.aiSource
-      ? ` via ${opts.aiSource.model} (${opts.aiSource.source === "on_device" ? "on-device" : "cloud"})`
-      : "";
+    const viaLabel = aiSourceLabel(opts.aiSource ?? serverSource);
+    const via = viaLabel ? ` via ${viaLabel}` : "";
     log(
       job,
       "exception_requested",
@@ -405,6 +406,7 @@ export class ContractCardService {
     const missingKindsVerdict = checkMissingEvidenceKinds(milestone, files);
     let verdict;
     let usedBrowserAi = false;
+    let serverSource: AiSourceInfo | undefined;
 
     if (missingKindsVerdict) {
       // Deterministic code guard ALWAYS overrides even if browser supplied a verdict.
@@ -417,7 +419,9 @@ export class ContractCardService {
       verdict = validated.verdict;
       usedBrowserAi = true;
     } else {
-      verdict = await evaluateEvidence(milestone, files);
+      const evaluated = await evaluateEvidenceWithSource(milestone, files);
+      verdict = evaluated.verdict;
+      serverSource = evaluated.aiSource;
     }
 
     job.pending = {
@@ -428,13 +432,15 @@ export class ContractCardService {
       currency: job.terms.currency,
       evidence_sha256: hashFiles(files),
       verdict,
-      ...(usedBrowserAi && browserEval?.aiSource ? { aiSource: browserEval.aiSource } : {}),
+      ...(usedBrowserAi && browserEval?.aiSource
+        ? { aiSource: browserEval.aiSource }
+        : serverSource
+          ? { aiSource: serverSource }
+          : {}),
       created_at: new Date().toISOString(),
     };
-    const suffix =
-      usedBrowserAi && browserEval?.aiSource
-        ? ` (${browserEval.aiSource.model}, ${browserEval.aiSource.source === "on_device" ? "on-device" : "cloud"})`
-        : "";
+    const sourceLabel = aiSourceLabel(usedBrowserAi ? browserEval?.aiSource : serverSource);
+    const suffix = sourceLabel ? ` (${sourceLabel})` : "";
     log(
       job,
       "proof_submitted",
@@ -620,6 +626,7 @@ export class ContractCardService {
   ): Promise<Job> {
     const job = await this.activeJob(jobId);
     let co;
+    let serverSource: AiSourceInfo | undefined;
     if (browserDraft) {
       // Deterministically re-compute milestone new_amount and totals against authoritative job.terms.
       const validated = validateChangeOrderDraft(
@@ -635,7 +642,9 @@ export class ContractCardService {
       if (!emailText) {
         throw new Error("Change-order email text is required.");
       }
-      co = await draftChangeOrder(job.terms, emailText);
+      const drafted = await draftChangeOrderWithSource(job.terms, emailText);
+      co = drafted.proposal;
+      serverSource = drafted.aiSource;
     }
 
     job.pending = {
@@ -643,12 +652,18 @@ export class ContractCardService {
       kind: "change_order",
       currency: job.terms.currency,
       change_order: co,
-      ...(browserDraft?.aiSource ? { aiSource: browserDraft.aiSource } : {}),
+      ...(browserDraft?.aiSource
+        ? { aiSource: browserDraft.aiSource }
+        : serverSource
+          ? { aiSource: serverSource }
+          : {}),
       created_at: new Date().toISOString(),
     };
     const suffix = browserDraft?.aiSource
       ? ` (drafted by ${browserDraft.aiSource.model} (${browserDraft.aiSource.source === "on_device" ? "on-device" : "cloud"}); raw email stayed on device)`
-      : "";
+      : serverSource
+        ? ` (drafted by ${aiSourceLabel(serverSource)})`
+        : "";
     log(job, "change_order_drafted", `${co.summary}${suffix}`, co);
     return await this.store.save(job);
   }
@@ -891,6 +906,21 @@ export class ContractCardService {
       };
     }
     return job;
+  }
+}
+
+/** Short provenance for the activity log: "gemini-3.8-flash, server", "Gemini Nano, on-device", "offline rules". */
+export function aiSourceLabel(src: AiSourceInfo | undefined): string | undefined {
+  if (!src) return undefined;
+  switch (src.source) {
+    case "on_device":
+      return `${src.model}, on-device`;
+    case "in_cloud":
+      return `${src.model}, cloud`;
+    case "server":
+      return `${src.model}, server`;
+    case "offline":
+      return "offline rules";
   }
 }
 

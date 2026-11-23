@@ -8,7 +8,7 @@ import {
   policyPrompt,
 } from "../../../shared/clause-ai/prompts.js";
 import { normalizePolicyExpiry } from "../../../shared/clause-ai/validate.js";
-import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
+import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
 import type { ContractSource } from "../contract/parser.js";
 import { SAMPLE_POLICY_TERMS } from "../fixtures.js";
 import { PolicyTerms, validatePolicyTerms } from "./schema.js";
@@ -17,6 +17,8 @@ export interface PolicyParseResult {
   policyTerms: PolicyTerms;
   problems: string[];
   parsedBy: "gemini" | "claude" | "offline-fixture";
+  /** Server provenance for the UI badge: live model + latency, or offline fixture. */
+  aiSource: ServerAiSource;
 }
 
 const POLICY_TOOL_SCHEMA = z.toJSONSchema(PolicyTerms, { target: "draft-7" }) as Record<string, unknown>;
@@ -27,6 +29,7 @@ export function looksLikePolicyDocument(src: ContractSource): boolean {
 }
 
 export async function parsePolicy(src: ContractSource): Promise<PolicyParseResult> {
+  const started = Date.now();
   const { value: policyTerms, usedFallback } = llmProvider()
     ? await withOfflineFallback(() => parsePolicyWithClaude(src), () => parsePolicyOffline(src))
     : { value: await parsePolicyOffline(src), usedFallback: true };
@@ -34,6 +37,7 @@ export async function parsePolicy(src: ContractSource): Promise<PolicyParseResul
     policyTerms,
     problems: validatePolicyTerms(policyTerms),
     parsedBy: usedFallback ? "offline-fixture" : llmProvider()!,
+    aiSource: serverAiSource(usedFallback, Date.now() - started),
   };
 }
 

@@ -17,6 +17,8 @@ vi.mock("@tabler/icons-react", () => {
     "IconCloud",
     "IconCreditCard",
     "IconDeviceLaptop",
+    "IconListCheck",
+    "IconServer",
     "IconDownload",
     "IconFileCheck",
     "IconFileDiff",

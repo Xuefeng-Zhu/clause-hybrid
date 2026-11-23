@@ -23,8 +23,20 @@ export interface PendingApproval {
   change_order?: ChangeOrderProposal;
   exception?: ExceptionProposal;
   /** Where the pending proposal/explanation was generated (Firebase AI Logic hybrid). */
-  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number };
+  aiSource?: AiSourceInfo;
   created_at: string;
+}
+
+/**
+ * Where AI output came from. on_device / in_cloud: the browser (Firebase AI Logic hybrid).
+ * server: the server's own model call (parsedBy names gemini or anthropic). offline: the offline
+ * fixture / rules path (no model ran).
+ */
+export interface AiSourceInfo {
+  source: "on_device" | "in_cloud" | "server" | "offline";
+  model: string;
+  ms: number;
+  parsedBy?: "gemini" | "anthropic" | "offline-fixture";
 }
 
 export interface JobEvent {
@@ -65,7 +77,7 @@ export interface Job {
   problems: string[];
   parsedBy: string;
   /** Where the terms were extracted when the browser parsed them (Firebase AI Logic hybrid). The raw document is not stored. */
-  aiSource?: { source: "on_device" | "in_cloud"; model: string; ms: number };
+  aiSource?: AiSourceInfo;
   cardholder_id?: string;
   card_id?: string;
   releasedMilestoneIds: string[];

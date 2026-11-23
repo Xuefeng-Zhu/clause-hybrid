@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CHANGE_ORDER_TOOL_SYSTEM, changeOrderPrompt } from "../../../shared/clause-ai/prompts.js";
 import { RawModelChangeOrder, validateChangeOrderDraft } from "../../../shared/clause-ai/validate.js";
-import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
+import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
 import type { ContractTerms } from "./schema.js";
 
 /** A proposed change the agent drafts from an email. It only takes effect after owner approval. */
@@ -17,8 +17,17 @@ export const ChangeOrderProposal = z.object({
 export type ChangeOrderProposal = z.infer<typeof ChangeOrderProposal>;
 
 export async function draftChangeOrder(terms: ContractTerms, emailText: string): Promise<ChangeOrderProposal> {
-  const { value: rawDraft } = !llmProvider()
-    ? { value: offlineDraft(emailText) }
+  return (await draftChangeOrderWithSource(terms, emailText)).proposal;
+}
+
+/** Server-side draft plus its provenance (live model + latency, or offline fixture) for the UI badge. */
+export async function draftChangeOrderWithSource(
+  terms: ContractTerms,
+  emailText: string,
+): Promise<{ proposal: ChangeOrderProposal; aiSource: ServerAiSource }> {
+  const started = Date.now();
+  const { value: rawDraft, usedFallback } = !llmProvider()
+    ? { value: offlineDraft(emailText), usedFallback: true }
     : await withOfflineFallback(
         () =>
           callTool({
@@ -35,7 +44,10 @@ export async function draftChangeOrder(terms: ContractTerms, emailText: string):
   if (!validated.ok || !validated.proposal) {
     throw new Error(`Invalid change-order draft: ${validated.errors.join(" ")}`);
   }
-  return ChangeOrderProposal.parse(validated.proposal);
+  return {
+    proposal: ChangeOrderProposal.parse(validated.proposal),
+    aiSource: serverAiSource(usedFallback, Date.now() - started),
+  };
 }
 
 /** Apply an APPROVED change order to the terms. Pure function; caller re-derives the card plan. */

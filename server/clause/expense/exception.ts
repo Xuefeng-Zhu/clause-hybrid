@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { EXCEPTION_TOOL_SYSTEM, exceptionPrompt } from "../../../shared/clause-ai/prompts.js";
 import { computeValidatedExceptionCap, RawModelException } from "../../../shared/clause-ai/validate.js";
-import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
+import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
 import { ClauseRef } from "../contract/schema.js";
 import type { PolicyTerms } from "./schema.js";
 
@@ -39,6 +39,18 @@ export async function draftPolicyException(
   note: string,
   opts: { requestedCharge?: number; requestedCap?: number; extraction?: RawModelException } = {},
 ): Promise<ExceptionProposal> {
+  return (await draftPolicyExceptionWithSource(terms, note, opts)).proposal;
+}
+
+/**
+ * Proposal plus server provenance for the UI badge. `aiSource` is undefined when the browser
+ * supplied the extraction (the caller carries the browser's own source instead).
+ */
+export async function draftPolicyExceptionWithSource(
+  terms: PolicyTerms,
+  note: string,
+  opts: { requestedCharge?: number; requestedCap?: number; extraction?: RawModelException } = {},
+): Promise<{ proposal: ExceptionProposal; aiSource?: ServerAiSource }> {
   const rule = terms.exception_clause;
   if (!rule) {
     throw new Error("This policy has no client-entertainment exception clause.");
@@ -48,11 +60,18 @@ export async function draftPolicyException(
     throw new Error("Provide a note naming the client and attendees.");
   }
 
-  const raw = opts.extraction
-    ? RawModelException.parse(opts.extraction)
-    : llmProvider()
-      ? (await withOfflineFallback(() => extractWithClaude(terms, trimmed), () => extractOffline(trimmed))).value
-      : extractOffline(trimmed);
+  let raw: RawModelException;
+  let aiSource: ServerAiSource | undefined;
+  if (opts.extraction) {
+    raw = RawModelException.parse(opts.extraction);
+  } else if (llmProvider()) {
+    const res = await withOfflineFallback(() => extractWithClaude(terms, trimmed), () => extractOffline(trimmed));
+    raw = res.value;
+    aiSource = serverAiSource(res.usedFallback, res.ms);
+  } else {
+    raw = extractOffline(trimmed);
+    aiSource = serverAiSource(true, 0);
+  }
 
   const effectiveRequestedCap = opts.requestedCap ?? raw.requested_cap;
   const { max_allowed, one_time_cap } = computeValidatedExceptionCap({
@@ -63,7 +82,7 @@ export async function draftPolicyException(
     requestedCap: effectiveRequestedCap,
   });
 
-  return ExceptionProposal.parse({
+  const proposal = ExceptionProposal.parse({
     client: raw.client.trim(),
     attendees: raw.attendees,
     attendee_names: raw.attendee_names.map((s) => s.trim()).filter(Boolean),
@@ -74,6 +93,7 @@ export async function draftPolicyException(
     source_note: trimmed,
     clause: rule.clause,
   });
+  return { proposal, ...(aiSource ? { aiSource } : {}) };
 }
 
 async function extractWithClaude(

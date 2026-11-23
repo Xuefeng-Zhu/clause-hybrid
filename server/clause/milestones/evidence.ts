@@ -6,7 +6,7 @@ import {
   EvidenceVerdict,
   validateEvidenceVerdict,
 } from "../../../shared/clause-ai/validate.js";
-import { callTool, llmProvider, withOfflineFallback } from "../llm.js";
+import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
 import type { EvidenceKind, Milestone } from "../contract/schema.js";
 
 export { EvidenceVerdict };
@@ -25,19 +25,32 @@ export interface EvidenceFile {
  * Either way the result is only a recommendation; the owner approves the release.
  */
 export async function evaluateEvidence(milestone: Milestone, files: EvidenceFile[]): Promise<EvidenceVerdict> {
+  return (await evaluateEvidenceWithSource(milestone, files)).verdict;
+}
+
+/**
+ * Verdict plus provenance for the UI badge. `aiSource` is undefined when code alone decided
+ * (missing evidence kinds, unreadable file): no model ran, so no AI badge.
+ */
+export async function evaluateEvidenceWithSource(
+  milestone: Milestone,
+  files: EvidenceFile[],
+): Promise<{ verdict: EvidenceVerdict; aiSource?: ServerAiSource }> {
   const missingKindsVerdict = checkMissingEvidenceKinds(milestone, files);
   if (missingKindsVerdict) {
-    return missingKindsVerdict;
+    return { verdict: missingKindsVerdict };
   }
-  if (!llmProvider()) return offlineVerdict(milestone, files);
+  if (!llmProvider()) return { verdict: offlineVerdict(milestone, files), aiSource: serverAiSource(true, 0) };
   // Live vision only: a placeholder/empty file would 400 at the model API, so stop in code.
   const unreadable = files.find((f) => Buffer.from(f.base64 ?? "", "base64").length < 64);
   if (unreadable) {
     return {
-      verdict: "insufficient",
-      reasoning: `${unreadable.filename} is empty or unreadable, so it can't show ${milestone.clause.clause_id} was met.`,
-      observed: [],
-      missing: [milestone.release_condition],
+      verdict: {
+        verdict: "insufficient",
+        reasoning: `${unreadable.filename} is empty or unreadable, so it can't show ${milestone.clause.clause_id} was met.`,
+        observed: [],
+        missing: [milestone.release_condition],
+      },
     };
   }
 
@@ -53,7 +66,7 @@ export async function evaluateEvidence(milestone: Milestone, files: EvidenceFile
     text: evidencePrompt(milestone, files),
   });
 
-  const { value: callInput } = await withOfflineFallback(() => callTool({
+  const { value: callInput, usedFallback, ms } = await withOfflineFallback(() => callTool({
     system: EVIDENCE_TOOL_SYSTEM,
     content: blocks,
     toolName: "record_verdict",
@@ -65,7 +78,7 @@ export async function evaluateEvidence(milestone: Milestone, files: EvidenceFile
   if (!validated.ok || !validated.verdict) {
     throw new Error(`Invalid evidence verdict: ${validated.errors.join(" ")}`);
   }
-  return validated.verdict;
+  return { verdict: validated.verdict, aiSource: serverAiSource(usedFallback, ms) };
 }
 
 /** Offline demo: filenames containing "stock" or "wrong" fail; everything else passes. */

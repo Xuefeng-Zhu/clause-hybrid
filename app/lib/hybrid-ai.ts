@@ -221,7 +221,30 @@ export async function onDeviceAvailability(): Promise<OnDeviceAvailability> {
   }
 }
 
-export function formatAiSource(r: { source: AiSource; model: string; ms: number }): string {
-  const t = r.ms >= 1000 ? `${(r.ms / 1000).toFixed(1)} s` : `${r.ms} ms`;
-  return `${r.source === "on_device" ? "On-device" : "Cloud"} · ${r.model} · ${t}`;
+/**
+ * Every place AI output can come from. The browser path (Firebase AI Logic hybrid) reports
+ * on_device / in_cloud; the server path reports server (its own Gemini/Anthropic call) or
+ * offline (the offline fixture rules, no model ran).
+ */
+export type AiSourceKind = AiSource | "server" | "offline";
+
+export interface AiSourceDisplay {
+  source: AiSourceKind;
+  model: string;
+  ms: number;
+  parsedBy?: "gemini" | "anthropic" | "offline-fixture";
+}
+
+export const OFFLINE_RULES_LABEL = "Offline rules";
+
+function formatLatency(ms: number): string {
+  const rounded = Math.max(0, Math.round(ms));
+  return rounded >= 1000 ? `${(rounded / 1000).toFixed(1)} s` : `${rounded} ms`;
+}
+
+/** "On-device · Gemini Nano · 840 ms", "Cloud · …", "Server · gemini-3.8-flash · 2.1 s", or "Offline rules". */
+export function formatAiSource(r: AiSourceDisplay): string {
+  if (r.source === "offline" || r.parsedBy === "offline-fixture") return OFFLINE_RULES_LABEL;
+  const where = r.source === "on_device" ? "On-device" : r.source === "server" ? "Server" : "Cloud";
+  return `${where} · ${r.model} · ${formatLatency(r.ms)}`;
 }
