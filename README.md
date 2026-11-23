@@ -57,7 +57,7 @@ Metal defaults to mock mode independently of Airwallex. See the [development gui
 
 ## Hybrid inference
 
-Clause runs structured extraction and review in the browser via Firebase AI Logic hybrid inference (`app/lib/hybrid-ai.ts`): Chrome Gemini Nano on-device when available, and `gemini-3.5-flash-lite` in the cloud otherwise. Per-step inference modes can be tuned in Firebase Remote Config (`app/lib/firebase.ts`) while preserving the in-code defaults below. Every wrapper shows an `AiSourceBadge` in the UI, validates model output deterministically before applying state changes, and falls back to the existing server action path on failure or unavailability.
+Clause runs structured extraction and review in the browser via Firebase AI Logic hybrid inference (`app/lib/hybrid-ai.ts`): Chrome Gemini Nano on-device when available, and `gemini-3.5-flash-lite` in the cloud otherwise. Per-step inference modes can be tuned in Firebase Remote Config (`app/lib/firebase.ts`) while preserving the in-code defaults below. Every wrapper shows an `AiSourceBadge` in the UI, validates model output deterministically before applying state changes, and falls back to the existing server action path on failure or unavailability (offline rules only in contest mode; never in strict on-device mode).
 
 | Step | Remote Config key | Default mode | Browser wrapper & deterministic boundary | Cloud model & server fallback |
 | --- | --- | --- | --- | --- |
@@ -66,6 +66,30 @@ Clause runs structured extraction and review in the browser via Firebase AI Logi
 | `exception` | `exception_mode` | `PREFER_ON_DEVICE` (`prefer_on_device`) | [`app/lib/clause-ai/exception.ts`](./app/lib/clause-ai/exception.ts) — AI explains only; `validateExceptionExtraction` computes `125 * attendees` cap | `gemini-3.5-flash-lite`; [`server/clause/expense/exception.ts`](./server/clause/expense/exception.ts) |
 | `changeOrder` | `changeOrder_mode` | `PREFER_IN_CLOUD` (`prefer_in_cloud`) | [`app/lib/clause-ai/changeOrder.ts`](./app/lib/clause-ai/changeOrder.ts) — AI drafts deltas/dates/quote only; `validateChangeOrderDraft` computes milestone `new_amount` & contract total | `gemini-3.5-flash-lite`; [`server/clause/contract/changeOrder.ts`](./server/clause/contract/changeOrder.ts) |
 | `evidence` | `evidence_mode` | `PREFER_IN_CLOUD` (`prefer_in_cloud`) | [`app/lib/clause-ai/evidence.ts`](./app/lib/clause-ai/evidence.ts) — downscales image input to one max-`768px` JPEG single-turn; code checks missing kinds & hashes originals | `gemini-3.5-flash-lite`; [`server/clause/milestones/evidence.ts`](./server/clause/milestones/evidence.ts) |
+
+### Contest mode (`CLAUSE_CONTEST_MODE=true`)
+
+The Firebase AI Logic contest requires generative AI to run through the Firebase AI Logic hybrid SDK. That SDK runs in the browser (and in the native apps); there is no server-side hybrid API, so the server can't honestly route a model call through it. With `CLAUSE_CONTEST_MODE=true` on the server:
+
+- `server/clause/llm.ts` reports no provider and `callTool` refuses, so no Gemini REST or Anthropic call is made, even if `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` are set ([`server/clause/contest-mode.ts`](./server/clause/contest-mode.ts)).
+- When the browser's Firebase AI Logic call can't run (no App Check token, quota, unsupported browser), the server fallback applies only its deterministic offline rules, badged **Offline rules**. Those rules read only the bundled samples; any other document gets a plain error instead of a model call.
+- PDF proof goes inline to cloud Gemini through Firebase AI Logic in the browser (`ONLY_IN_CLOUD`), not to the server.
+- The agent chat (a direct provider call) is hidden in the UI and refused server-side.
+- `list-jobs` returns `runtime.contestMode`, so the UI's fallback messages say what happened.
+
+The flag defaults to off, which keeps the original server providers. The hosted preview runs with it on. `test/contest-mode.test.ts` proves zero provider calls with both keys set.
+
+### What leaves the device
+
+| Mode | Document text / proof | What the server gets |
+| --- | --- | --- |
+| Hybrid (default), on-device model ready | Read by Gemini Nano in Chrome; nothing sent for reading | Structured terms when you create the job |
+| Hybrid, long document or no on-device model | Sent to cloud Gemini through Firebase AI Logic (App Check) | Structured terms |
+| Hybrid, Firebase AI Logic can't run | Sent to the Clause server: offline rules in contest mode, the server's own Gemini outside it (badge **Server**) | The raw text |
+| Strict on-device (`only_on_device`: account menu toggle, `?ai=strict`, or Remote Config) | Read only by Gemini Nano. If `LanguageModel.availability()` isn't `available`, nothing is called and the UI says **"On-device model not available. Nothing was sent."** Errors never fall back to the cloud or the server. PDFs are refused. | Structured terms only. Proof files are still uploaded with the on-device verdict when you submit, for hashing and release binding |
+| Offline | On-device if ready, otherwise **"Needs a connection. Nothing was sent."** A document read offline stays as a local draft; **Save draft** later sends only its terms | Nothing until you save |
+
+`test/strict-on-device.test.ts` proves strict mode makes zero SDK, network or server-fallback calls when the local model is missing, downloadable or unavailable, including after runtime and schema errors.
 
 - **Offline behavior:** When `navigator.onLine === false` and on-device inference is unavailable (or disabled by `ONLY_IN_CLOUD`), wrappers return a typed `"needs-connection"` result and the UI shows `"Needs a connection. Nothing was sent."` without guessing or contacting cloud/server endpoints.
 - **Privacy & telemetry:** [`app/lib/ai-log.ts`](./app/lib/ai-log.ts) writes fire-and-forget metadata (`step`, `mode`, `inferenceSource`, `latencyMs`, `validatorOk`, `createdAt`) under `users/{uid}/aiCalls` with Firebase Anonymous Auth and [`firestore.rules`](./firestore.rules). Raw contract text, expense text, exception notes, and proof images are never stored in Firestore.

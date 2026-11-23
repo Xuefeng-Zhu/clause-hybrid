@@ -3,6 +3,9 @@
 #   deploy/deploy-preview.sh build    -> Cloud Build image (async; prints build id)
 #   deploy/deploy-preview.sh run      -> deploy image to Cloud Run
 #   deploy/deploy-preview.sh channel  -> Firebase Hosting preview channel "kane" (7d)
+# The preview runs in contest mode (CLAUSE_CONTEST_MODE=true): the server calls no model provider.
+# To change env on an existing service, prefer `gcloud run services update --update-env-vars`, since the
+# run step's --set-env-vars replaces every variable on the service.
 # Reads client VITE_* values from .env.local at deploy time; VITE_APPCHECK_DEBUG_TOKEN is never sent.
 set -euo pipefail
 PROJECT=${PROJECT:-fbailogic26vrt-3071}
@@ -30,7 +33,7 @@ case "${1:-}" in
     gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
       --allow-unauthenticated --min-instances 0 --max-instances 2 --cpu 1 --memory 2Gi \
       --concurrency 40 --timeout 300 --port 8080 \
-      --set-env-vars "AUTH_DISABLED=true,NETLIFY_LOCAL=true,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-$(openssl rand -hex 32)}"
+      --set-env-vars "CLAUSE_CONTEST_MODE=true,AUTH_DISABLED=true,NETLIFY_LOCAL=true,BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-$(openssl rand -hex 32)}"
     ;;
   channel)
     npx -y firebase-tools@latest hosting:channel:deploy kane --expires 7d --project "$PROJECT"

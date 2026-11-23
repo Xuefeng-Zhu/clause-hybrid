@@ -5,7 +5,7 @@ Throwaway hosted preview for automated testing. Not production.
 - Cloud Run service `clause-hybrid-preview` (us-west1), min 0 / max 2 instances, 1 vCPU / 2 GiB, unauthenticated.
 - Firebase Hosting preview channel `kane` (7-day expiry) rewrites `**` to the Cloud Run service. The live channel is not used.
 - DB: built-in PGlite on the container's in-memory filesystem (no `DATABASE_URL`). Data resets when an instance stops, and two instances do not share data.
-- Runtime env: `AUTH_DISABLED=true` (shared `dev@local.test` identity), `NETLIFY_LOCAL=true` (the framework's local-emulator marker; lets the production bundle use PGlite), random `BETTER_AUTH_SECRET` per deploy.
+- Runtime env: `CLAUSE_CONTEST_MODE=true` (no server model provider; gen AI only through Firebase AI Logic in the browser; see the README's contest mode section), `AUTH_DISABLED=true` (shared `dev@local.test` identity), `NETLIFY_LOCAL=true` (the framework's local-emulator marker; lets the production bundle use PGlite), random `BETTER_AUTH_SECRET` per deploy.
 - Client `VITE_*` values come from `.env.local` as Cloud Build substitutions/build args. `VITE_APPCHECK_DEBUG_TOKEN` is never passed and is forced empty in the Dockerfile.
 
 ```bash
