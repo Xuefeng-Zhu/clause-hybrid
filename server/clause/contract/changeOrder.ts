@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CHANGE_ORDER_TOOL_SYSTEM, changeOrderPrompt } from "../../../shared/clause-ai/prompts.js";
 import { RawModelChangeOrder, validateChangeOrderDraft } from "../../../shared/clause-ai/validate.js";
 import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
+import { isContestMode } from "../contest-mode.js";
 import type { ContractTerms } from "./schema.js";
 
 /** A proposed change the agent drafts from an email. It only takes effect after owner approval. */
@@ -66,7 +67,11 @@ export function applyChangeOrder(terms: ContractTerms, co: ChangeOrderProposal):
 }
 
 function offlineDraft(emailText: string): RawModelChangeOrder {
-  if (!emailText.includes("Q-2026-0412")) throw new Error("Offline mode only understands samples/change-order-email.txt.");
+  if (!emailText.includes("Q-2026-0412")) throw new Error(
+      isContestMode()
+        ? "Firebase AI Logic couldn't run in this browser, and in contest mode the server uses no other model. Its offline rules only read the bundled change-order email."
+        : "Offline mode only understands samples/change-order-email.txt.",
+    );
   return {
     summary: "In-stock quartz substitution adds $800 to Milestone 2; completion moves from Dec 18 to Dec 23, 2026.",
     milestone_amount_changes: [

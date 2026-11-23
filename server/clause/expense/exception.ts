@@ -2,6 +2,7 @@ import { z } from "zod";
 import { EXCEPTION_TOOL_SYSTEM, exceptionPrompt } from "../../../shared/clause-ai/prompts.js";
 import { computeValidatedExceptionCap, RawModelException } from "../../../shared/clause-ai/validate.js";
 import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
+import { isContestMode } from "../contest-mode.js";
 import { ClauseRef } from "../contract/schema.js";
 import type { PolicyTerms } from "./schema.js";
 
@@ -127,6 +128,8 @@ function extractOffline(note: string): RawModelException {
     };
   }
   throw new Error(
-    "Offline mode only understands the bundled Lone Star Logistics dinner note. Set ANTHROPIC_API_KEY to evaluate custom exception notes.",
+    isContestMode()
+      ? "Firebase AI Logic couldn't run in this browser, and in contest mode the server uses no other model. Its offline rules only read the bundled Lone Star Logistics dinner note."
+      : "Offline mode only understands the bundled Lone Star Logistics dinner note. Set GEMINI_API_KEY to evaluate custom exception notes.",
   );
 }

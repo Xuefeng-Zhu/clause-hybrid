@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
+import { assertServerModelAllowed, isContestMode } from "./contest-mode.js";
 
 /**
  * One structured "tool call" to whichever model is configured.
@@ -10,6 +11,8 @@ import { config } from "./config.js";
 export type LlmProvider = "gemini" | "claude";
 
 export function llmProvider(): LlmProvider | undefined {
+  // Contest mode: no direct provider, ever. Every server AI step takes its offline path.
+  if (isContestMode()) return undefined;
   if (config.gemini.apiKey) return "gemini";
   if (config.anthropic.apiKey) return "claude";
   return undefined;
@@ -19,6 +22,7 @@ export function llmModelLabel(): string {
   const p = llmProvider();
   if (p === "gemini") return config.gemini.model;
   if (p === "claude") return config.anthropic.model;
+  if (isContestMode()) return "offline rules (contest mode: server model providers off)";
   return "offline fixtures (no GEMINI_API_KEY / ANTHROPIC_API_KEY)";
 }
 
@@ -83,6 +87,7 @@ export function serverAiSource(usedOffline: boolean, ms: number): ServerAiSource
 }
 
 export async function callTool(req: ToolCallRequest): Promise<unknown> {
+  assertServerModelAllowed(req.toolName);
   const p = llmProvider();
   if (p === "gemini") return callGemini(req);
   if (p === "claude") return callClaude(req);
@@ -90,6 +95,7 @@ export async function callTool(req: ToolCallRequest): Promise<unknown> {
 }
 
 async function callClaude(req: ToolCallRequest): Promise<unknown> {
+  assertServerModelAllowed("anthropic");
   const client = new Anthropic({ apiKey: config.anthropic.apiKey });
   const msg = await client.messages.create({
     model: config.anthropic.model,
@@ -130,6 +136,7 @@ function toGeminiParts(content: ToolCallRequest["content"]): GeminiPart[] {
 }
 
 async function callGemini(req: ToolCallRequest): Promise<unknown> {
+  assertServerModelAllowed("gemini");
   const body = {
     system_instruction: { parts: [{ text: req.system }] },
     contents: [{ role: "user", parts: toGeminiParts(req.content) }],

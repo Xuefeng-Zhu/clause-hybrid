@@ -1,6 +1,7 @@
 import { createGateway, type IssuingGateway } from "./airwallex/index.js";
 import { config, resolveMetalMode, syncScopedCredentials } from "./config.js";
 import { llmModelLabel } from "./llm.js";
+import { isContestMode } from "./contest-mode.js";
 import {
   SAMPLE_CHANGE_ORDER_EMAIL,
   SAMPLE_EXCEPTION_NOTE,
@@ -46,6 +47,8 @@ export function runtimeInfo() {
     metalMode,
     metalNetwork: metalMode === "testnet" ? "Metal Testnet (*USDZ)" : "in-memory mock",
     model: llmModelLabel(),
+    /** CLAUSE_CONTEST_MODE: the server calls no model provider; gen AI runs only via Firebase AI Logic. */
+    contestMode: isContestMode(),
   };
 }
 

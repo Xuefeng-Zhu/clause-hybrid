@@ -9,6 +9,7 @@ import {
 } from "../../../shared/clause-ai/prompts.js";
 import { normalizePolicyExpiry } from "../../../shared/clause-ai/validate.js";
 import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
+import { isContestMode } from "../contest-mode.js";
 import type { ContractSource } from "../contract/parser.js";
 import { SAMPLE_POLICY_TERMS } from "../fixtures.js";
 import { PolicyTerms, validatePolicyTerms } from "./schema.js";
@@ -82,7 +83,9 @@ async function parsePolicyOffline(src: ContractSource): Promise<PolicyTerms> {
   const text = src.kind === "text" ? src.text : "";
   if (!text.includes("TR-2611") && !/ACME ROBOTICS/i.test(text)) {
     throw new Error(
-      "Offline mode only understands bundled samples (Q-2026-0412 or TR-2611). Set ANTHROPIC_API_KEY to parse other documents.",
+      isContestMode()
+        ? "Firebase AI Logic couldn't run in this browser, and in contest mode the server uses no other model. Its offline rules only read the bundled samples (Q-2026-0412 or TR-2611)."
+        : "Offline mode only understands bundled samples (Q-2026-0412 or TR-2611). Set GEMINI_API_KEY to parse other documents.",
     );
   }
   const parsed = PolicyTerms.parse(structuredClone(SAMPLE_POLICY_TERMS));

@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import { callTool, llmProvider, serverAiSource, withOfflineFallback, type ServerAiSource } from "../llm.js";
 import { ContractTerms, validateTerms } from "./schema.js";
 import { SAMPLE_TERMS } from "../fixtures.js";
+import { CONTEST_MODE_OFFLINE_ONLY, isContestMode } from "../contest-mode.js";
 
 export type ContractSource =
   | { kind: "text"; text: string } // pasted quote or email thread
@@ -93,6 +94,7 @@ export function assertQuotesAreVerbatim(terms: ContractTerms, src: ContractSourc
 async function parseOffline(src: ContractSource): Promise<ContractTerms> {
   const text = src.kind === "text" ? src.text : "";
   if (!text.includes("Q-2026-0412")) {
+    if (isContestMode()) throw new Error(CONTEST_MODE_OFFLINE_ONLY);
     throw new Error("Offline mode only understands samples/quote-maple-street-cafe.txt. Set GEMINI_API_KEY to parse other quotes.");
   }
   return ContractTerms.parse(structuredClone(SAMPLE_TERMS));

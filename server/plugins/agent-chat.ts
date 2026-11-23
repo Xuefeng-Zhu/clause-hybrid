@@ -9,6 +9,7 @@ import {
   searchConversationReferences,
   validateConversationReferences,
 } from "../lib/composer-references.js";
+import { assertAgentChatAllowed } from "../clause/contest-mode.js";
 
 const INITIAL_TOOL_NAMES = [
   "view-screen",
@@ -41,6 +42,8 @@ export default createAgentChatPlugin({
     },
   },
   prepareRequest: async ({ references }) => {
+    // The chat model is a direct provider call, which contest mode forbids.
+    assertAgentChatAllowed();
     await validateConversationReferences(references);
   },
   actions: loadActionsFromStaticRegistry(actionsRegistry),
