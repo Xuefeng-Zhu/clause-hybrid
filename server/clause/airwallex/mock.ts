@@ -12,6 +12,9 @@ import type {
   SimulatedDepositRequest,
 } from "./types.js";
 
+// Ordinary mock swipes take place during the sample trip. Deadline presets supply their own time.
+const SAMPLE_CHARGE_AT = "2026-11-19T18:00:00.000Z";
+
 /**
  * Offline stand-in for the Airwallex sandbox. It enforces the same card controls in the
  * same order with the same decline codes, so the full demo runs with no keys.
@@ -56,7 +59,8 @@ export class MockIssuingGateway implements IssuingGateway {
 
   async simulateAuthorization(req: SimulatedAuthRequest): Promise<IssuingTransaction> {
     const card = this.cards.get(req.card_id);
-    const reason = card ? this.check(card, req) : "CARD_CLOSED";
+    const at = req.at ?? SAMPLE_CHARGE_AT;
+    const reason = card ? this.check(card, req, at) : "CARD_CLOSED";
     const txn: IssuingTransaction = {
       transaction_id: `txn_mock_${randomUUID().slice(0, 8)}`,
       card_id: req.card_id,
@@ -67,7 +71,7 @@ export class MockIssuingGateway implements IssuingGateway {
       transaction_type: reason ? "AUTHORIZATION" : "CLEARING",
       status: reason ? "FAILED" : "APPROVED",
       ...(reason ? { failure_reason: reason } : {}),
-      created_at: req.at ?? new Date().toISOString(),
+      created_at: at,
     };
     if (!reason) this.walletBalance -= req.amount;
     this.txns.push(txn);
@@ -94,11 +98,11 @@ export class MockIssuingGateway implements IssuingGateway {
     return this.txns.filter((t) => t.card_id === card_id).map((t) => structuredClone(t));
   }
 
-  private check(card: Card, req: SimulatedAuthRequest): DeclineReason | undefined {
+  private check(card: Card, req: SimulatedAuthRequest, at: string): DeclineReason | undefined {
     if (card.card_status === "CLOSED") return "CARD_CLOSED";
     if (card.card_status !== "ACTIVE") return "CARD_INACTIVE";
     const ac = card.authorization_controls;
-    const now = new Date(req.at ?? Date.now()).getTime();
+    const now = Date.parse(at);
     if ((ac.active_from && now < Date.parse(ac.active_from)) || (ac.active_to && now > Date.parse(ac.active_to))) {
       return "OUT_OF_ALLOWED_TIME_RANGE";
     }

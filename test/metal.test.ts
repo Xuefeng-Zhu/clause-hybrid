@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockIssuingGateway } from "../server/clause/airwallex/mock.js";
 import { config } from "../server/clause/config.js";
 import { ContractTerms } from "../server/clause/contract/schema.js";
@@ -91,7 +91,7 @@ describe("contractToMandateTerms pure mapping", () => {
 });
 
 describe("MockMetalRail deterministic enforcement", () => {
-  it("enforces paid, cap exceeded, payee not listed, budget spent, occurrences used, expiry, revocation, and replace carry-over", async () => {
+  it("enforces paid, cap exceeded, payee not listed, budget spent, occurrences used, expiry, revocation, and replace carry-over", async ({ onTestFinished }) => {
     const rail = new MockMetalRail();
     const job = { id: "job_mock_1", terms: structuredClone(sampleTerms) };
     // Make M1=5000, M2=5000, M3=2000 -> cap=50 USDZ, budget=120 USDZ, maxOccurrences=3
@@ -100,10 +100,10 @@ describe("MockMetalRail deterministic enforcement", () => {
     job.terms.milestones[2]!.amount = 2000;
     job.terms.total_amount = 12000;
 
-    const nowMs = Date.parse("2026-11-13T00:00:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-13T00:00:00.000Z") });
+    onTestFinished(() => { vi.useRealTimers(); });
     const mandateTerms = contractToMandateTerms(job, {
       payee: MOCK_CONTRACTOR_ADDRESS,
-      nowMs,
     });
 
     const issued = await rail.issueMandate(job, mandateTerms);
