@@ -73,6 +73,31 @@ The first Kane run against a preview with live Gemini. In Kane's headless Chrome
 
 **Verification:** with an App Check debug token injected into the test browser only, Kane ran flow 01 again and it **passed** with the badge `Cloud · gemini-3.5-flash-lite · 3.2 s`. Server-path output on the same preview showed `Server · gemini-3.8-flash · 2.7 s` (checked over DevTools, not Kane).
 
+### Run 4: a full run and a real FAILURES.md hand-off (Nov 24)
+
+**Target: a local production build of `077e0d7`** (`http://127.0.0.1:8787/home`, `AUTH_DISABLED=true`, PGlite, no Firebase config, no model keys), not the hosted preview. The preview's Google Cloud lab account was deleted, so the Cloud Run service and Hosting channel return 503 and could not be redeployed. With no Firebase config and no model keys, every AI step took the **offline rules** (badge `Offline rules`); no cloud model and no on-device model ran in this run. Kane drove a headless Chrome for Testing over CDP. kane-cli 0.10.4, run with `kane/run-flows.sh` (no sleep hack).
+
+Before the run, the sample travel trip from the date fix in `077e0d7` was checked on the same build over the action API: `hotel` and `uber` charges approved, `dinner`, `bar`, `bestbuy` and `late` declined with their § reasons.
+
+| # | First run | After the loop | Credits | Kane link |
+|---|---|---|---|---|
+| 01 | **FAIL**: flow text, not the app | **PASS** | 45.7, then 29.4 | [run 1](https://test-manager.lambdatest.com/projects/01M79MD0W5S8Y89MBQ81NBW302/test-cases/01M87VSSSC9E10HTJYK6KS9FZR/dashboard/share/US_6YKCUDLE3Y2732V5729S52PX743TL74GOGTMM27NJSESJ7CLU1YBSMV4VN9F6TBO?type=summary&agentView=true&fqdn=summary-page) · [rerun](https://test-manager.lambdatest.com/projects/01M79MD0W5S8Y89MBQ81NBW302/test-cases/01M87Y0WQ05DZJK5CB224JZFTF/dashboard/share/US_Z5V3E6312D46LZBJLYJGY7ADD2G5MN86RCTN7O7MWE6ZFDLMLM6YOL95YFA7MBR8?type=summary&agentView=true&fqdn=summary-page) |
+| 02 | **PASS**: `$6,000 Declined Over released limit §1.1`, inline explanation with `From the card rules` and `Nothing was paid. Card rules decided this, not AI.`, header `Released $4,000` | not rerun | 57.2 | [run](https://test-manager.lambdatest.com/projects/01M79MD0W5S8Y89MBQ81NBW302/test-cases/01M87VZ89FW5ZXFF1XH1B4W2R9/dashboard/share/US_TPN4W9575PZ3MVJXD908KLSKAXLE4UHHSE3WA19UZMN0OLXLPKQ1X8Z69WI9PHX0?type=summary&agentView=true&fqdn=summary-page) |
+| 03 | **PASS**: `$12,000 → $12,800 (+$800)`, Dec 18 → Dec 23, waits on Reject / Approve, header unchanged | not rerun | 30.6 | [run](https://test-manager.lambdatest.com/projects/01M79MD0W5S8Y89MBQ81NBW302/test-cases/01M87W6SZ0D513ZYFCN2E7HW78/dashboard/share/US_AUXLYET7ISLAY0WIR67WFX05LL943SFPX11446EXWNQMQR71Y6TEWW2OUWOS8OH0?type=summary&agentView=true&fqdn=summary-page) |
+| 04 | **PASS**: `Doesn’t meet requirements` (`Offline rules`), `Proof rejected`, `Held $5,000`, disabled `… $5,000 stays locked`, header `Released $4,000` | not rerun | 48.7 | [run](https://test-manager.lambdatest.com/projects/01M79MD0W5S8Y89MBQ81NBW302/test-cases/01M87WCPZZY4RTBMJHKEYQA4KX/dashboard/share/US_TLRW4JZ9I0MVP5954WR4A9XG5S6A1CVXJF7T5Q5T0IU4464DUAWZHUROWPO2Z60Z?type=summary&agentView=true&fqdn=summary-page) |
+
+Balance 8,655.44 → 8,403.10 credits (252.3 used; the runs report 211.6, the rest is balance overhead). Flow 03 used the job an earlier flow had left active, which its text allows.
+
+**Flow 01's failure was in the test, not the app.** Every explicit assertion passed (`$12,000`, `$4,000`/`$5,000`/`$3,000`, `Dec 18, 2026`, `Offline rules`, `Released $4,000`). Kane then turned the closing sentence "Fail the test if any of these texts are missing." into a checkpoint with an empty text list and stopped (`assertion_error.step_not_achievable`). Kane's own verdict: `automation_bug` / `config_issue`, "a malformed test/checkpoint configuration rather than a bad browser action".
+
+**The hand-off.** `kane/run-flows.sh` wrote `kane/out/FAILURES.md`. That file and `kane/AGENT_LOOP.md` went to **Codex CLI** (0.171.0, `gpt-6.2-astra`, high reasoning, `codex exec`), told to decide honestly between an app bug and a flow-text bug and not to run Kane itself. Codex read Kane's step log and concluded:
+
+> Kane passed every explicit assertion, including the release header after card issuance. Step 14 failed on the trailing "any of these texts" instruction because Kane had no list for that checkpoint. I'll remove just that sentence.
+
+Codex removed that one sentence from `kane/flows/01-quote-to-terms.txt`; every explicit assertion stayed. Vitest 122/122 and `tsc --noEmit` were clean (Codex ran them, and they were run again independently afterwards). Commit [`db51d20`](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/db51d20) notes Codex as the author. Only flow 01 was rerun, on a fresh store and a fresh browser profile, and it **passed** in 281 s.
+
+So the loop ran end to end with a real `FAILURES.md`, but what it fixed was the test, not the product. Flows 02 and 04 end with similar catch-all sentences and passed this time; they were left unchanged because they were not rerun.
+
 ## How the fixes were made (the loop, honestly)
 
 The loop that produced `22daf67` was: Kane ran the flows → an AI coding agent read Kane's results and the page Kane was stuck on → the agent wrote the fix and tests (`tsc`, Vitest 75/75) → Kane re-ran only the failed flows. The agent for this fix was **Hark** (the AI agent Frank used for this project), not Antigravity; no Antigravity session was involved in this fix. Antigravity (Gemini) built an earlier part of the app (the Phase 2 hybrid wrappers), not the Kane fixes.
