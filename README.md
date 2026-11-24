@@ -13,7 +13,7 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm dev
 ```
 
-Open the URL printed by the dev server, usually `http://localhost:8080`. On the welcome screen, choose **Continue as local dev** to reach the **Contract Jobs** workspace at `/home`.
+Open the URL the dev server prints (for example `➜  Local:   http://localhost:8080/`; Vite picks the next free port if 8080 is taken). On the welcome screen, choose **Continue as local dev** to reach the **Contract Jobs** workspace at `/home`.
 
 Both walkthroughs use the default in-memory Airwallex and Metal mocks and the bundled parsing fixtures. They require zero external keys. **Sandbox → Environment & parser** shows the card gateway and parser in use. The optional Clause chat sidebar and full-screen chat at `/chat` require an Agent-Native model connection. Use the chat setup prompt or **Settings → Model**.
 
@@ -106,7 +106,18 @@ The flag defaults to off, which keeps the original server providers. The hosted 
 
 ## Verified with Kane CLI
 
-Every money-touching flow is checked in a real browser by [Kane CLI](https://www.testmuai.com/kane-cli/), and failures feed back to the coding agent. Kane caught two bugs that are now fixed (red → green). See [docs/KANE.md](docs/KANE.md) and `kane/`.
+[Kane CLI](https://www.testmuai.com/kane-cli/) runs four plain-English browser flows (`kane/flows/01`–`04`): quote → terms, an over-limit charge and its explanation, a change order, and a rejected proof photo. Offline mode (`05`) is a manual Chrome DevTools check, not Kane.
+
+The real catch was flow 02: a $6,000 charge against the $4,000 released limit was correctly declined, but **Explain** opened an empty chat with no AI connected. The fix ([`22daf67`](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/22daf676)) explains the decline inline, validated against the card rules, and Kane's rerun passed. Flow 04 now also asserts that a rejected proof reads `Proof rejected` and `$5,000 stays locked`, not `Proof received`. Kane ran in headless Chrome without Gemini Nano, so it checked the cloud, server and offline-rules paths, not on-device inference.
+
+Fastest check, after `AUTH_DISABLED=true corepack pnpm dev`:
+
+```bash
+npm i -g @testmuai/kane-cli && kane-cli login
+KANE_URL=http://localhost:8080/home kane/run-flows.sh 02   # use the URL your dev server prints, plus /home
+```
+
+Run-by-run results, the fix, and what is and isn't Kane: [docs/KANE.md](docs/KANE.md).
 
 ## How it works
 
