@@ -195,7 +195,7 @@ export function contractToMandateTerms(
     throw new Error("Cannot derive Metal mandate terms: contract has no milestones.");
   }
 
-  const envPayee = process.env.METAL_CONTRACTOR_ADDRESS?.trim(); // guard:allow-no-env-credentials — public contractor wallet address for Metal testnet payouts
+  const envPayee = process.env.METAL_CONTRACTOR_ADDRESS?.trim(); // guard:allow-env-credential — public contractor wallet address for Metal testnet payouts
   const payee = opts.payee?.trim() || envPayee || MOCK_CONTRACTOR_ADDRESS;
 
   const largestMilestone = terms.milestones.reduce((best, m) =>

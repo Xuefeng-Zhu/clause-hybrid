@@ -209,6 +209,11 @@ export interface ClauseJob {
   parsedBy: string;
   cardholder_id?: string;
   card_id?: string;
+  card_controls_verified_at?: string;
+  releaseAttempt?: {
+    payment_id: string;
+    state: "running" | "needs_review";
+  };
   releasedMilestoneIds: string[];
   rules: CardRule[];
   pending?: PendingApproval;

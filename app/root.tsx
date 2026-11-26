@@ -16,6 +16,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLoaderData,
   useLocation,
   useNavigate,
 } from "react-router";
@@ -25,6 +26,7 @@ import { Layout as AppLayout } from "@/components/layout/Layout";
 import { AppToolkitProvider } from "@/components/ui/toolkit-provider";
 import { useNavigationState } from "@/hooks/use-navigation-state";
 import { APP_TITLE } from "@/lib/app-config";
+import { loadChatAvailability } from "@/lib/chat-availability.server";
 import {
   HOME_PATH,
   isChatPathname,
@@ -49,6 +51,8 @@ configureTracking({
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: stylesheet },
 ];
+
+export { loadChatAvailability as loader };
 
 const THEME_INIT_SCRIPT = getThemeInitScript();
 const LOCALE_INIT_SCRIPT = getLocaleInitScript();
@@ -116,7 +120,7 @@ function ThemeToggleItem() {
   );
 }
 
-function AppContent() {
+function AppContent({ chatEnabled }: { chatEnabled: boolean }) {
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const navigate = useNavigate();
   const t = useT();
@@ -128,10 +132,12 @@ function AppContent() {
       <CommandMenu
         open={cmdkOpen}
         onOpenChange={setCmdkOpen}
+        {...(chatEnabled ? {} : { placeholder: t("root.commandSearch") })}
+        showAgentFallback={chatEnabled}
         chatStorageKey="chat"
       >
         <CommandMenu.Group heading={t("root.commandActions")}>
-          {isChatThread ? (
+          {chatEnabled && isChatThread ? (
             <CommandMenu.Item
               onSelect={() =>
                 window.dispatchEvent(new Event("agent-chat:new-chat"))
@@ -145,7 +151,7 @@ function AppContent() {
               {t("navigation.home")}
             </CommandMenu.Item>
           ) : null}
-          {!isChatPathname(location.pathname) ? (
+          {chatEnabled && !isChatPathname(location.pathname) ? (
             <CommandMenu.Item onSelect={() => navigate(NEW_CHAT_PATH)}>
               {t("navigation.chat")}
             </CommandMenu.Item>
@@ -168,7 +174,7 @@ function AppContent() {
           <ThemeToggleItem />
         </CommandMenu.Group>
       </CommandMenu>
-      <AppLayout>
+      <AppLayout chatEnabled={chatEnabled}>
         <Outlet />
       </AppLayout>
     </>
@@ -176,6 +182,7 @@ function AppContent() {
 }
 
 export default function Root() {
+  const { chatEnabled } = useLoaderData<typeof loadChatAvailability>();
   const [queryClient] = useState(() => createAgentNativeQueryClient());
   // The path, not the visitor, picks the shell, so the SSR shell stays one
   // cached page per URL.
@@ -188,7 +195,7 @@ export default function Root() {
         i18n={{ catalog: i18nCatalog }}
       >
         <DbSyncSetup />
-        <AppContent />
+        <AppContent chatEnabled={chatEnabled} />
       </AppProviders>
     </AppToolkitProvider>
   );

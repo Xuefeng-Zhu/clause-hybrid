@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { config } from "./config.js";
+import { getProviderConfig, type ProviderConfig } from "./config.js";
 import { assertServerModelAllowed, isContestMode } from "./contest-mode.js";
 
 /**
@@ -10,18 +10,19 @@ import { assertServerModelAllowed, isContestMode } from "./contest-mode.js";
  */
 export type LlmProvider = "gemini" | "claude";
 
-export function llmProvider(): LlmProvider | undefined {
+export function llmProvider(providers?: ProviderConfig): LlmProvider | undefined {
   // Contest mode: no direct provider, ever. Every server AI step takes its offline path.
   if (isContestMode()) return undefined;
-  if (config.gemini.apiKey) return "gemini";
-  if (config.anthropic.apiKey) return "claude";
+  const { gemini, anthropic } = providers ?? getProviderConfig();
+  if (gemini.apiKey) return "gemini";
+  if (anthropic.apiKey) return "claude";
   return undefined;
 }
 
 export function llmModelLabel(): string {
   const p = llmProvider();
-  if (p === "gemini") return config.gemini.model;
-  if (p === "claude") return config.anthropic.model;
+  if (p === "gemini") return getProviderConfig().gemini.model;
+  if (p === "claude") return getProviderConfig().anthropic.model;
   if (isContestMode()) return "offline rules (contest mode: server model providers off)";
   return "offline fixtures (no GEMINI_API_KEY / ANTHROPIC_API_KEY)";
 }
@@ -78,9 +79,10 @@ export function serverAiSource(usedOffline: boolean, ms: number): ServerAiSource
   if (usedOffline || !p) {
     return { source: "offline", model: "offline-fixture", ms: rounded, parsedBy: "offline-fixture" };
   }
+  const { gemini, anthropic } = getProviderConfig();
   return {
     source: "server",
-    model: p === "gemini" ? config.gemini.model : config.anthropic.model,
+    model: p === "gemini" ? gemini.model : anthropic.model,
     ms: rounded,
     parsedBy: p === "claude" ? "anthropic" : "gemini",
   };
@@ -88,17 +90,18 @@ export function serverAiSource(usedOffline: boolean, ms: number): ServerAiSource
 
 export async function callTool(req: ToolCallRequest): Promise<unknown> {
   assertServerModelAllowed(req.toolName);
-  const p = llmProvider();
-  if (p === "gemini") return callGemini(req);
-  if (p === "claude") return callClaude(req);
+  const providers = getProviderConfig();
+  const p = llmProvider(providers);
+  if (p === "gemini") return callGemini(req, providers.gemini);
+  if (p === "claude") return callClaude(req, providers.anthropic);
   throw new Error("No model configured. Set GEMINI_API_KEY (or ANTHROPIC_API_KEY).");
 }
 
-async function callClaude(req: ToolCallRequest): Promise<unknown> {
+async function callClaude(req: ToolCallRequest, { apiKey, model }: ProviderConfig["anthropic"]): Promise<unknown> {
   assertServerModelAllowed("anthropic");
-  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+  const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
-    model: config.anthropic.model,
+    model,
     max_tokens: req.maxTokens,
     system: req.system,
     tools: [{ name: req.toolName, description: req.description, input_schema: req.schema as Anthropic.Tool.InputSchema }],
@@ -135,7 +138,7 @@ function toGeminiParts(content: ToolCallRequest["content"]): GeminiPart[] {
   });
 }
 
-async function callGemini(req: ToolCallRequest): Promise<unknown> {
+async function callGemini(req: ToolCallRequest, { apiKey, model, fallbackModels }: ProviderConfig["gemini"]): Promise<unknown> {
   assertServerModelAllowed("gemini");
   const body = {
     system_instruction: { parts: [{ text: req.system }] },
@@ -152,7 +155,7 @@ async function callGemini(req: ToolCallRequest): Promise<unknown> {
       maxOutputTokens: Math.max(req.maxTokens, 2048) * 4,
       temperature: 0,
       // Extraction into a fixed schema needs little reasoning; keep latency demo-friendly.
-      thinkingConfig: { thinkingLevel: process.env.GEMINI_THINKING || "low" },
+      thinkingConfig: { thinkingLevel: process.env.GEMINI_THINKING || "low" }, // guard:allow-env-credential — deployment model reasoning level
     },
   };
   type GeminiJson = {
@@ -162,10 +165,10 @@ async function callGemini(req: ToolCallRequest): Promise<unknown> {
   // Gemini returns 429/503 ("high demand") in bursts, and under load a call can hang. Retry
   // transient errors and timeouts on the next model (same key, separate capacity), within an
   // overall budget so the caller can fall back to the offline path instead of spinning.
-  const perAttemptMs = Number(process.env.GEMINI_ATTEMPT_TIMEOUT_MS) || 25_000;
-  const budgetMs = Number(process.env.GEMINI_BUDGET_MS) || 60_000;
+  const perAttemptMs = Number(process.env.GEMINI_ATTEMPT_TIMEOUT_MS) || 25_000; // guard:allow-env-credential — deployment timeout in milliseconds
+  const budgetMs = Number(process.env.GEMINI_BUDGET_MS) || 60_000; // guard:allow-env-credential — deployment time budget in milliseconds
   const started = Date.now();
-  const models = [config.gemini.model, config.gemini.model, ...config.gemini.fallbackModels.filter((m) => m !== config.gemini.model)];
+  const models = [model, model, ...fallbackModels.filter((fallback) => fallback !== model)];
   let lastError = "unknown";
   for (let attempt = 0; attempt < models.length; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, attempt === 1 ? 1000 : 300));
@@ -176,7 +179,7 @@ async function callGemini(req: ToolCallRequest): Promise<unknown> {
     try {
       res = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": config.gemini.apiKey! },
+        headers: { "content-type": "application/json", "x-goog-api-key": apiKey! },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(Math.min(perAttemptMs, remaining)),
       });

@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { getProviderConfig } from "../config.js";
 import { AirwallexClient } from "./client.js";
 import type {
   AuthorizationControls,
@@ -34,10 +34,13 @@ import type {
  */
 export class SandboxIssuingGateway implements IssuingGateway {
   readonly mode = "sandbox" as const;
-  constructor(private readonly awx = new AirwallexClient()) {}
+  constructor(
+    private readonly awx = new AirwallexClient(),
+    private readonly cardholderId = getProviderConfig().awx.cardholderId,
+  ) {}
 
   async createDelegateCardholder(email: string): Promise<Cardholder> {
-    const preset = config.awx.cardholderId;
+    const preset = this.cardholderId;
     if (preset) return { cardholder_id: preset, email, type: "DELEGATE", status: "READY" };
     try {
       const res = await this.awx.post<any>("/issuing/cardholders/create", { type: "DELEGATE", email });
@@ -73,28 +76,9 @@ export class SandboxIssuingGateway implements IssuingGateway {
       nick_name: input.nick_name,
       authorization_controls: input.authorization_controls,
     };
-    try {
-      return normalizeCard(await this.awx.post<any>("/issuing/cards/create", payload));
-    } catch (err) {
-      const limits = input.authorization_controls.transaction_limits?.limits;
-      if (limits && limits.length > 1) {
-        console.warn("[Airwallex sandbox] Multiple transaction_limits rejected on createCard; falling back to first limit:", err);
-        const fallbackControls: AuthorizationControls = {
-          ...input.authorization_controls,
-          transaction_limits: {
-            currency: input.authorization_controls.transaction_limits!.currency,
-            limits: [limits[0]!],
-          },
-        };
-        return normalizeCard(
-          await this.awx.post<any>("/issuing/cards/create", {
-            ...payload,
-            authorization_controls: fallbackControls,
-          }),
-        );
-      }
-      throw err;
-    }
+    const issued = normalizeCard(await this.awx.post<any>("/issuing/cards/create", payload));
+    if (!issued.card_id) throw new Error("Airwallex did not return the issued card ID. Check the sandbox before retrying.");
+    return await this.verifyControls(issued.card_id, input.authorization_controls, "CLOSED");
   }
 
   async getCard(card_id: string): Promise<Card> {
@@ -102,28 +86,53 @@ export class SandboxIssuingGateway implements IssuingGateway {
   }
 
   async updateCard(card_id: string, patch: { card_status?: CardStatus; authorization_controls?: AuthorizationControls }): Promise<Card> {
+    let updated: Card;
     try {
-      const res = await this.awx.post<any>(`/issuing/cards/${card_id}/update`, patch as Record<string, unknown>, { withRequestId: false });
-      return normalizeCard(res);
-    } catch (err) {
-      const limits = patch.authorization_controls?.transaction_limits?.limits;
-      if (limits && limits.length > 1) {
-        console.warn("[Airwallex sandbox] Multiple transaction_limits rejected on updateCard; falling back to first limit:", err);
-        const fallbackPatch = {
-          ...patch,
-          authorization_controls: {
-            ...patch.authorization_controls,
-            transaction_limits: {
-              currency: patch.authorization_controls!.transaction_limits!.currency,
-              limits: [limits[0]!],
-            },
-          },
-        };
-        const res = await this.awx.post<any>(`/issuing/cards/${card_id}/update`, fallbackPatch as Record<string, unknown>, { withRequestId: false });
-        return normalizeCard(res);
-      }
-      throw err;
+      updated = normalizeCard(
+        await this.awx.post<any>(`/issuing/cards/${card_id}/update`, patch, { withRequestId: false }),
+      );
+    } catch (error) {
+      if (patch.authorization_controls) await this.containUnverifiedCard(card_id, "INACTIVE");
+      throw error;
     }
+    return patch.authorization_controls
+      ? await this.verifyControls(card_id, patch.authorization_controls, "INACTIVE")
+      : updated;
+  }
+
+  private async verifyControls(
+    cardId: string,
+    requested: AuthorizationControls,
+    safeStatus: "CLOSED" | "INACTIVE",
+  ): Promise<Card> {
+    try {
+      const actual = await this.getCard(cardId);
+      if (cardControlsMatch(requested, actual.authorization_controls)) return actual;
+    } catch {
+      // An unavailable readback also leaves the provider's enforcement unverified.
+    }
+    return await this.containUnverifiedCard(cardId, safeStatus);
+  }
+
+  private async containUnverifiedCard(cardId: string, safeStatus: "CLOSED" | "INACTIVE"): Promise<never> {
+    let confirmedStatus: CardStatus | undefined;
+    try {
+      await this.awx.post(
+        `/issuing/cards/${cardId}/update`,
+        { card_status: safeStatus },
+        { withRequestId: false },
+      );
+      const { card_status } = await this.getCard(cardId);
+      if (card_status === safeStatus || card_status === "CLOSED") {
+        confirmedStatus = card_status;
+      }
+    } catch {
+      // Report that the containment attempt itself was unverified.
+    }
+    const outcome = confirmedStatus
+      ? `Airwallex confirmed the card is ${confirmedStatus.toLowerCase()}.`
+      : "The card status is unverified. Check Airwallex before retrying.";
+    throw new Error(`Airwallex controls could not be verified for card ${cardId}. ${outcome}`);
   }
 
   async simulateAuthorization(req: SimulatedAuthRequest): Promise<IssuingTransaction> {
@@ -144,7 +153,7 @@ export class SandboxIssuingGateway implements IssuingGateway {
           const { at: _ignored, ...rest } = req;
           return await this.simulateNow(rest);
         } finally {
-          await this.updateCard(req.card_id, { authorization_controls: original }).catch(() => undefined);
+          await this.updateCard(req.card_id, { authorization_controls: original });
         }
       }
     }
@@ -216,6 +225,31 @@ export class SandboxIssuingGateway implements IssuingGateway {
     const res = await this.awx.get<any>("/issuing/transactions", { card_id });
     return (res.items ?? []).map((t: any) => normalizeTxn(t));
   }
+}
+
+/** Compare the requested fields with the issuer readback, independent of list order. */
+export function cardControlsMatch(
+  requested: AuthorizationControls,
+  actual: AuthorizationControls,
+): boolean {
+  const sameList = (expected: string[] | undefined, observed: string[] | undefined) =>
+    !expected || (Array.isArray(observed) && expected.length === observed.length
+      && [...new Set(observed)].length === expected.length
+      && expected.every((value) => observed.includes(value)));
+  const sameDate = (expected: string | undefined, observed: string | undefined) =>
+    !expected || (!!observed && Date.parse(expected) === Date.parse(observed));
+  const limits = requested.transaction_limits;
+  const applied = actual.transaction_limits;
+  return sameList(requested.allowed_currencies, actual.allowed_currencies)
+    && sameList(requested.allowed_merchant_categories, actual.allowed_merchant_categories)
+    && (!requested.allowed_transaction_count
+      || requested.allowed_transaction_count === actual.allowed_transaction_count)
+    && sameDate(requested.active_from, actual.active_from)
+    && sameDate(requested.active_to, actual.active_to)
+    && (!limits || (!!applied && limits.currency === applied.currency
+      && Array.isArray(applied.limits) && limits.limits.length === applied.limits.length
+      && limits.limits.every((expected) => applied.limits.some((cardLimit) =>
+        cardLimit.interval === expected.interval && cardLimit.amount === expected.amount))));
 }
 
 function normalizeCard(r: any): Card {

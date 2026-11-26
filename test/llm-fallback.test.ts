@@ -9,6 +9,7 @@ describe("model outage fallback", () => {
   const saved = config.gemini.apiKey;
   afterEach(() => {
     config.gemini.apiKey = saved;
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
@@ -44,12 +45,11 @@ describe("model outage fallback", () => {
 
   it("moves past a hanging model and falls back offline within the budget", async () => {
     config.gemini.apiKey = "test-key";
-    process.env.GEMINI_ATTEMPT_TIMEOUT_MS = "50";
+    vi.stubEnv("GEMINI_ATTEMPT_TIMEOUT_MS", "50");
     vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_res, rej) => {
       init.signal?.addEventListener("abort", () => rej(new Error("The operation was aborted due to timeout")));
     })));
     const res = await parseContract({ kind: "text", text: quote });
-    delete process.env.GEMINI_ATTEMPT_TIMEOUT_MS;
     expect(res.parsedBy).toBe("offline-fixture");
   }, 20_000);
 

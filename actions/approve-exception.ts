@@ -2,6 +2,7 @@ import { defineAction } from "@agent-native/core/action";
 import { z } from "zod";
 
 import { getService, summarize } from "../server/clause/app.js";
+import { assertSignedInApprover, requirePolicyApprover } from "../server/clause/approvalAccess.js";
 
 export default defineAction({
   description:
@@ -10,8 +11,12 @@ export default defineAction({
     jobId: z.string().describe("Policy job id"),
     approvalId: z.string().describe("Pending approval_id for the policy_exception"),
   }),
+  authorize: assertSignedInApprover,
+  needsApproval: true,
   run: async ({ jobId, approvalId }) => {
-    const job = await (await getService()).approveException(jobId, approvalId);
+    const service = await getService();
+    const approvedBy = requirePolicyApprover();
+    const job = await service.approveException(jobId, approvalId, approvedBy);
     return {
       summary: summarize(job),
       rules: job.rules,

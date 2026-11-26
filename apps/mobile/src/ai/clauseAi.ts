@@ -56,7 +56,7 @@ export interface PhoneParseResult {
 }
 
 export function getConfiguredCloudModel(): string {
-  const fromEnv = process.env.EXPO_PUBLIC_CLOUD_MODEL;
+  const fromEnv = process.env.EXPO_PUBLIC_CLOUD_MODEL; // guard:allow-env-credential — public Expo build-time model name
   return typeof fromEnv === "string" && fromEnv.trim().length > 0
     ? fromEnv.trim()
     : DEFAULT_CLOUD_MODEL;

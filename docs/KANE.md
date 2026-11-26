@@ -15,6 +15,12 @@ Use the URL your dev server prints, plus `/home` (Vite defaults to 8080 and pick
 
 Flow 02 is the one that found the real bug (below). Then run all four Kane flows with `kane/run-flows.sh`. Each flow spends Kane credits. Results are written to `kane/out/<flow>.ndjson`, and failures to `kane/out/FAILURES.md`.
 
+Run the optional travel exception and CSV regression on a disposable preview with mock card authorizations. Flow 06 creates a fresh trip job and leaves it in the test workspace.
+
+```bash
+KANE_URL=http://localhost:8080/home KANE_MAX_STEPS=45 kane/run-flows.sh 06
+```
+
 **Rejected-photo fixture (flow 04):** `kane/fixtures/stock-not-job-site.jpg`, a generated placeholder image (made with ImageMagick for this repo, no third-party content). It is the default `KANE_PROOF_FILE`. With no model configured, the server's offline proof rule rejects any filename containing `stock` or `wrong` (`server/clause/milestones/evidence.ts`), so this fixture gets `Doesn’t meet requirements`. Any other filename passes the offline rule, which is why the name matters. With a live model, the model judges the image itself; this generated fixture has not been run against a live model.
 
 ## What is and isn't Kane
@@ -38,6 +44,9 @@ Flow 05 (offline) is also not Kane: kane-cli 0.10.4 has no network emulation, so
 | 03 | Kane | Sample change order (in-stock quartz, +$800 on Milestone 2): `$12,000 → $12,800 (+$800)`, deadline Dec 18 → Dec 23, source badge, waits on Approve/Reject, totals unchanged |
 | 04 | Kane | Rejected proof photo: `Doesn’t meet requirements` (either apostrophe), source badge, chip `Proof rejected` (not `Proof received`), `Held $5,000` (not `+$5,000`), disabled button `… $5,000 stays locked`, header `Released $4,000` |
 | 05 | Manual (DevTools) | Offline: `Needs a connection. Nothing was sent.` |
+| 06 | Kane (optional) | A `$480` dinner declines under §3.3, the manager approves one charge up to `$500`, the approved retry restores the `$300` cap, and the report shows one approved charge, two declines, zero reimbursement, and the CSV export confirmation. |
+
+The flow 06 steps passed in desktop Chrome against a local production build with both providers mocked. The report showed one approved $480 charge, two declines, and $0 owed, and the export showed its confirmation. Flow 06 still awaits a hosted Kane run. The Vitest policy tests check the CSV contents.
 
 ## What Kane caught
 
@@ -96,7 +105,7 @@ Balance 8,655.44 → 8,403.10 credits (252.3 used; the runs report 211.6, the re
 
 Codex removed that one sentence from `kane/flows/01-quote-to-terms.txt`; every explicit assertion stayed. Vitest 122/122 and `tsc --noEmit` were clean (Codex ran them, and they were run again independently afterwards). Commit [`db51d20`](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/db51d20) notes Codex as the author. Only flow 01 was rerun, on a fresh store and a fresh browser profile, and it **passed** in 281 s.
 
-So the loop ran end to end with a real `FAILURES.md`, but what it fixed was the test, not the product. Flows 02 and 04 end with similar catch-all sentences and passed this time; they were left unchanged because they were not rerun.
+The loop ran end to end with a real `FAILURES.md` and fixed the flow text. Flows 02 and 04 also ended with catch-all sentences during Run 4. Flow 02 now asks for the checks directly and opens **Sandbox → Custom authorization**.
 
 ## How the fixes were made (the loop, honestly)
 

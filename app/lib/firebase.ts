@@ -83,9 +83,10 @@ function readEnv(key: string): string {
   if (
     typeof process !== "undefined" &&
     process.env?.VITEST &&
+    key.startsWith("VITE_") &&
     Object.prototype.hasOwnProperty.call(process.env, key)
   ) {
-    const p = process.env[key];
+    const p = process.env[key]; // guard:allow-env-credential — Vitest stubs for public Vite settings
     return typeof p === "string" ? p.trim() : "";
   }
   const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;

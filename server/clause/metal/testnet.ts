@@ -158,14 +158,14 @@ export class TestnetMetalRail implements MetalRail {
 
   constructor(opts: TestnetMetalRailOptions = {}) {
     this.metalDir = path.resolve(
-      opts.metalDir || process.env.METAL_DIR || DEFAULT_METAL_DIR, // guard:allow-no-env-credentials — deploy-level directory path outside repo
+      opts.metalDir || process.env.METAL_DIR || DEFAULT_METAL_DIR, // guard:allow-env-credential — deploy-level directory path outside repo
     );
     this.cliPrefix =
-      opts.cliPrefix || process.env.METAL_CLI_PREFIX || DEFAULT_CLI_PREFIX; // guard:allow-no-env-credentials — deploy-level CLI path
+      opts.cliPrefix || process.env.METAL_CLI_PREFIX || DEFAULT_CLI_PREFIX; // guard:allow-env-credential — deploy-level CLI path
     this.account =
-      opts.account || process.env.METAL_ACCOUNT || ""; // guard:allow-no-env-credentials — public on-chain principal address
+      opts.account || process.env.METAL_ACCOUNT || ""; // guard:allow-env-credential — public on-chain principal address
     this.rpcUrl =
-      opts.rpcUrl || process.env.METAL_RPC_URL || ""; // guard:allow-no-env-credentials — testnet RPC endpoint passed to metal-agent subprocess
+      opts.rpcUrl || process.env.METAL_RPC_URL || ""; // guard:allow-env-credential — testnet RPC endpoint passed to metal-agent subprocess
 
     const repoRoot = path.resolve(process.cwd());
     if (this.metalDir === repoRoot || this.metalDir.startsWith(`${repoRoot}${path.sep}`)) {

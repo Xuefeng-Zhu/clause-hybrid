@@ -8,7 +8,8 @@ export default defineAction({
   schema: z.object({ jobId: z.string().describe("Job id, e.g. job_1a2b3c4d") }),
   http: { method: "GET" },
   run: async ({ jobId }) => {
-    const job = await (await getService()).getJob(jobId);
-    return { summary: summarize(job), job };
+    const service = await getService();
+    const job = await service.getJob(jobId);
+    return { summary: summarize(job), job, issuerCard: await service.getIssuerCardState(job) };
   },
 });

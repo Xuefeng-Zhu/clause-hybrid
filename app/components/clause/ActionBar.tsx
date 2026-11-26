@@ -111,6 +111,7 @@ export function ActionBar({
   const isActive = summary.status === "active";
   const isClosed = summary.status === "closed";
   const isBusy = Boolean(busyLabel);
+  const releaseAttempt = job.releaseAttempt;
 
   const pending = job.pending ?? summary.pending ?? null;
   const pendingRelease =
@@ -307,6 +308,11 @@ export function ActionBar({
                     .
                   </span>
                 )
+              ) : releaseAttempt ? (
+                <span role="status">
+                  {releaseAttempt.state === "running" ? "Release in progress. " : "Release needs review. "}
+                  Check the card and Metal payment {releaseAttempt.payment_id} before retrying.
+                </span>
               ) : pendingRelease ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span
@@ -392,7 +398,7 @@ export function ActionBar({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={isBusy}
+                    disabled={isBusy || Boolean(releaseAttempt)}
                     onClick={onRejectPending}
                     className="h-9 text-xs text-stone-600 hover:bg-stone-200/60 hover:text-stone-900"
                   >
@@ -404,7 +410,7 @@ export function ActionBar({
                       type="button"
                       disabled={
                         pendingRelease.verdict?.verdict === "insufficient" ||
-                        isBusy
+                        isBusy || Boolean(releaseAttempt)
                       }
                       onClick={onApproveRelease}
                       className="h-9 rounded-lg bg-[#0F7B55] px-4 text-xs font-semibold tabular-nums text-white shadow-xs hover:bg-[#0C6646] focus-visible:ring-[#0F7B55]/45"
@@ -705,7 +711,7 @@ export function ActionBar({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  disabled={isBusy}
+                  disabled={isBusy || Boolean(releaseAttempt)}
                   onClick={onRejectPending}
                   className="text-xs text-stone-600"
                 >
@@ -715,7 +721,7 @@ export function ActionBar({
                   id="approveRelease"
                   type="button"
                   disabled={
-                    pendingRelease.verdict?.verdict === "insufficient" || isBusy
+                    pendingRelease.verdict?.verdict === "insufficient" || isBusy || Boolean(releaseAttempt)
                   }
                   onClick={() => {
                     onApproveRelease();

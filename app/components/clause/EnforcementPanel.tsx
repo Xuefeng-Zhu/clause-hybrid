@@ -28,6 +28,7 @@ interface EnforcementPanelProps {
   job: ClauseJob;
   summary: JobSummary;
   isFrozen: boolean;
+  issuerControlsVerified?: boolean | undefined;
   busy: boolean;
   activeClauseId: string | null;
   onHoverClause: (clauseId: string | null) => void;
@@ -42,6 +43,7 @@ export function EnforcementPanel({
   job,
   summary,
   isFrozen,
+  issuerControlsVerified,
   busy,
   activeClauseId,
   onHoverClause,
@@ -178,7 +180,7 @@ export function EnforcementPanel({
         {/* Derived controls list */}
         <div className="space-y-1.5">
           <h3 className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-stone-400">
-            Enforced rules ({controls.length})
+            Planned rules ({controls.length})
           </h3>
           <div className="divide-y divide-[#EAE4D7] rounded-xl border border-[#E6E0D4] bg-white/80">
             {controls.map((ctrl) => {
@@ -277,10 +279,10 @@ export function EnforcementPanel({
       : undefined;
 
   return (
-    <aside aria-label="Live enforcement" className="space-y-5">
+    <aside aria-label={issuerControlsVerified === false ? "Card controls" : "Live enforcement"} className="space-y-5">
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="font-contract-serif text-lg font-normal tracking-tight text-stone-900">
-          Live enforcement
+          {issuerControlsVerified === false ? "Card controls" : "Live enforcement"}
         </h2>
       </div>
 
@@ -385,8 +387,15 @@ export function EnforcementPanel({
       {/* Plain-English Card Controls */}
       <div className="space-y-1.5">
         <h3 className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-stone-400">
-          Active controls
+          {issuerControlsVerified === true
+            ? "Issuer-verified controls"
+            : issuerControlsVerified === false ? "Planned controls" : "Active controls"}
         </h3>
+        {issuerControlsVerified === false ? (
+          <p role="status" className="px-1 text-xs text-amber-800">
+            Check the card in Airwallex. The issuer’s applied controls are unverified.
+          </p>
+        ) : null}
         <div className="divide-y divide-[#EAE4D7] rounded-xl border border-[#E6E0D4] bg-white/75">
           {controls.map((ctrl) => {
             const theme = getClauseTheme(ctrl.clauseId);

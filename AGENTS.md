@@ -13,16 +13,17 @@ Use local docs only (no web research): `pnpm action docs-search --query "<topic>
 - **Strict model / code / approver boundary**
   - The model reads quotes, policies and trip requests (`parse-quote`), milestone evidence (`submit-proof`), change-order emails (`draft-change-order`), and exception notes (`request-exception`). In chat, cite a `clause_id` when the action returns one. Describe operational declines such as frozen cards or insufficient wallet funds using the reported reason.
   - Deterministic code (`server/clause/policy/cardRules.ts`, `server/clause/milestones/service.ts`) computes all dollar limits, MCC allowlists, `active_to` deadlines, evidence SHA-256 bindings, and decline explanations. Never invent amounts or limits not returned by an action.
-  - Invoke `approve-terms`, `approve-release`, `approve-change-order`, `approve-exception`, or `close-job` from chat only when the owner or manager explicitly directs that action in the conversation.
+  - Invoke `approve-terms`, `approve-release`, `approve-change-order`, `approve-exception`, or `close-job` from chat only when the owner or manager explicitly directs that action in the conversation. Approval actions use the framework's human approval gate and owner-scoped job lookup. Trip issuance and exception approval also check the deployment's `CLAUSE_POLICY_APPROVER_EMAILS` list, with the built-in mock demo identity allowed in development and auth-disabled previews.
 - **UI responsiveness:** Acknowledge user actions within 100 ms (never > 400 ms), reject overlapping mutations on the active slot, and allow client-side cancellation to free the slot.
-- **Data & credentials.** `SqlJobStore` (`server/clause/store/sqlJobStore.ts`) scopes PostgreSQL/PGlite jobs in `cl_jobs` by the authenticated `owner_email`. Use the scoped vault for user credentials. `server/plugins/secrets.ts` registers `AWX_CLIENT_ID`, `AWX_API_KEY`, `AWX_CARDHOLDER_ID`, `GEMINI_API_KEY`, and `ANTHROPIC_API_KEY`. `server/clause/config.ts` looks them up with `resolveSecretDetailed` and has deployment environment fallbacks for Airwallex and Gemini. The current implementation stores retrieved model keys in process-wide config, where they can carry over to a later request without its own key.
+- **Data & credentials.** `SqlJobStore` (`server/clause/store/sqlJobStore.ts`) scopes PostgreSQL/PGlite jobs in `cl_jobs` by the authenticated `owner_email`. Use the scoped vault for user credentials. `server/plugins/secrets.ts` registers `AWX_CLIENT_ID`, `AWX_API_KEY`, `AWX_CARDHOLDER_ID`, `GEMINI_API_KEY`, and `ANTHROPIC_API_KEY`. `server/clause/config.ts` resolves them for the active request via `resolveSecretDetailed` and supports deployment environment fallbacks for Airwallex and Gemini.
 - **Branding:** Keep `server/plugins/agent-native-email-branding.ts` aligned (`app.name: "Clause"`, `app.homePath: "/home"`).
 
 ## Runtime limits
 
-- **Airwallex.** The workspace uses an in-memory mock or the Airwallex sandbox. When a sandbox create or update with both trip-card limits fails, the adapter retries with only `PER_TRANSACTION`. Clause still records both planned rules, so verify the provider's card controls before claiming it enforces the `ALL_TIME` trip budget.
+- **Airwallex.** The workspace uses an in-memory mock or the Airwallex sandbox. The adapter reads back sandbox controls after creating or updating a card and requires both `ALL_TIME` and `PER_TRANSACTION` for trip cards. On a failed readback or mismatched controls, it attempts to close a new card or freeze an existing card and reports the outcome. Use the issuer verification status from `get-job` when describing sandbox enforcement.
 - **Policy exceptions.** Approval raises the card-wide per-transaction cap for merchants already allowed by the policy. The next approved simulated charge consumes the exception, even if that charge fits under the base cap. If two hours elapse first, `simulate-charge` restores the base cap before processing the next simulated charge after expiry.
 - **Metal.** The default rail is an in-memory mock. Treat its “Verified on chain” label as a simulated result. Testnet mode invokes the Metal CLI for on-chain verification and can submit testnet payouts. Read the active Airwallex and Metal modes from `list-jobs` before describing results.
+- **Milestone releases.** A durable approval claim records the stage and carries a stable payment ID. Repeating a completed approval returns its saved result. An interrupted or uncertain release keeps its claim for manual reconciliation and blocks a repeat payout and demo reset.
 
 ## Actions
 
@@ -31,7 +32,7 @@ The workspace uses `useActionQuery` and `useActionMutation` in `app/components/c
 | Action | HTTP | Args | Purpose |
 | --- | --- | --- | --- |
 | `list-jobs` | `GET` | `{}` | List the current user's contractor and policy jobs and report Airwallex, Metal, and model runtime info |
-| `get-job` | `GET` | `{ jobId }` | Read full `Job` document (terms, verbatim clauses, derived `CardRule[]`, pending approval, transactions, events) |
+| `get-job` | `GET` | `{ jobId }` | Read the full `Job` document and the sandbox issuer's card status and control verification result |
 | `parse-quote` | `POST` | `{ text?, useSample?, sampleKind? }` | Extract `ContractTerms` or `PolicyTerms` from pasted text or a bundled sample and create a draft with validation results. `sampleKind` is `contract` or `policy` |
 | `approve-terms` | `POST` | `{ jobId }` | Issue a contractor card capped at the sum of signing milestones and bind its Metal mandate, or issue a trip card with the planned trip budget and per-charge cap |
 | `simulate-charge` | `POST` | `{ jobId, preset?, amount?, merchantName?, mcc? }` | Simulate a preset or custom swipe and return a `DeclineExplanation` when declined, with a clause reference when applicable |
@@ -47,7 +48,7 @@ The workspace uses `useActionQuery` and `useActionMutation` in `app/components/c
 | `reject-pending` | `POST` | `{ jobId, reason? }` | Reject the current pending milestone release, change order, or policy exception without modifying card controls |
 | `freeze-card` | `POST` | `{ jobId, frozen }` | Toggle Airwallex card between `INACTIVE` (frozen) and `ACTIVE` |
 | `close-job` | `POST` | `{ jobId }` | Permanently close the Airwallex virtual card (`CLOSED`) and mark job `closed` |
-| `reset-demo` | `POST` | `{}` | Delete every job owned by the current user, including custom jobs, and clear the process-wide Airwallex and Metal mocks. Previously issued sandbox cards and testnet artifacts persist |
+| `reset-demo` | `POST` | `{}` | Delete every job owned by the current user, including custom jobs, and clear the process-wide Airwallex and Metal mocks. Pending release reconciliation blocks reset. Previously issued sandbox cards and testnet artifacts persist |
 | `view-screen` | `false` | `{}` | Return `navigation`, `runtime`, `activeJob` summary + recent transactions for `<current-screen>` |
 | `navigate` | `false` | `{ view, path?, threadId? }` | Navigate current browser tab (`home` / `jobs` -> `/home`, `chat` -> `/chat`) |
 

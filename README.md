@@ -1,8 +1,12 @@
 # Clause
 
-[Open the live demo](https://clause-7j1k.onrender.com/)
+[Open the live demo](https://8080-agrbns4donht7p3tyd2gpj43qe.instabox.tech/home)
 
 Clause turns a contractor quote or an approved business trip into an Airwallex virtual card with spending controls derived from the source document. Contract cards use a cumulative cap based on released milestones and pair with a Metal payout mandate. Trip cards use a trip budget, a per-charge cap, and manager-approved exceptions. Clause shows the source clauses behind each planned rule and cites the applicable clause when a decline maps to one.
+
+Try the sample Maple Street Café quote, issue the mock card, then submit a **$6,000** charge from **Sandbox → Custom authorization**. Hover over the decline and choose **Explain** to see how §1.1 limits spending to the **$4,000** released so far.
+
+The hosted demo runs in contest mode on a shared InstaBox sandbox that auto-pauses after 30 idle minutes. Use the bundled samples there. [InstaBox deployment and health checks](./deploy/README-instabox-preview.md)
 
 ## Quick start
 
@@ -19,7 +23,7 @@ Both walkthroughs use the default in-memory Airwallex and Metal mocks and the bu
 
 ## Run the demos
 
-Start each walkthrough with **New job**. The sample dates are fixed. Run the ordinary authorizations before the relevant sample card expires on November 23, 2026 for the trip or December 18, 2026 for the original contract. The explicitly dated late presets are designed to show expiry declines.
+Start each walkthrough with **New job**. Ordinary swipes in the card mock use a fixed sample date. The late presets use their own dates to show expiry declines. The Metal mock evaluates mandate expiry against the payout time.
 
 ### Contractor quote · Maple Street Café
 
@@ -51,7 +55,7 @@ For custom contractor quotes and trip policies, paste the document text into **N
 | `GEMINI_API_KEY` | Enables Gemini for quote and policy extraction, proof review, change orders, and exception notes. |
 | `ANTHROPIC_API_KEY` | Enables Claude for those tasks when Gemini is unconfigured. |
 
-The workspace can fall back to bundled fixtures on model failure. Offline proof evaluation checks the declared evidence kinds and uses a filename heuristic. The current document workflow stores resolved model keys in process-wide configuration, so a request without a key can reuse a previous request's key.
+The workspace can fall back to bundled fixtures on model failure. Offline proof evaluation checks the declared evidence kinds and uses a filename heuristic. Airwallex and model credentials are resolved for each request. If the credential vault is unavailable, the action returns a retryable error.
 
 Metal defaults to mock mode independently of Airwallex. See the [development guide](./DEVELOPING.md) for the testnet account, CLI, and deployment settings.
 
@@ -97,7 +101,7 @@ The flag defaults to off, which keeps the original server providers. The hosted 
 
 ## Sandbox limits
 
-- The Airwallex sandbox adapter can retry a trip card create or update with only `PER_TRANSACTION` when a request with both limits fails. Clause still stores and displays its planned `ALL_TIME` budget. Inspect the sandbox card's actual controls when verifying cumulative enforcement.
+- Clause reads back the Airwallex sandbox card's spend limits after issuing or updating it. The action reports an error if Airwallex cannot confirm the planned limits, including a trip card's `ALL_TIME` budget and `PER_TRANSACTION` cap.
 - A manager exception temporarily raises the card-wide per-charge limit for all allowed merchant categories. Clause restores the base cap immediately after an approved simulated purchase or before the next simulated purchase after the two-hour window expires.
 - Airwallex sandbox uses its own clock. For future-dated expiry presets, Clause can temporarily move the sandbox card's validity window into the past and then attempts to restore it. The local mock evaluates the preset timestamp directly.
 - Mock card and payout state lives in the app process. Jobs persist in SQL, so create a fresh job to get a usable mock card after restarting the server.
@@ -107,6 +111,8 @@ The flag defaults to off, which keeps the original server providers. The hosted 
 ## Verified with Kane CLI
 
 [Kane CLI](https://www.testmuai.com/kane-cli/) runs four plain-English browser flows (`kane/flows/01`–`04`): quote → terms, an over-limit charge and its explanation, a change order, and a rejected proof photo. Offline mode (`05`) is a manual Chrome DevTools check, not Kane.
+
+Run `kane/run-flows.sh 06` on an isolated mock demo to cover the travel exception, cap restoration, and CSV export. The [Kane runbook](./docs/KANE.md) describes the new flow and records which checks have run.
 
 The real catch was flow 02: a $6,000 charge against the $4,000 released limit was correctly declined, but **Explain** opened an empty chat with no AI connected. The fix ([`22daf67`](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/22daf676)) explains the decline inline, validated against the card rules, and Kane's rerun passed. Flow 04 now also asserts that a rejected proof reads `Proof rejected` and `$5,000 stays locked`, not `Proof received`. Kane ran in headless Chrome without Gemini Nano, so it checked the cloud, server and offline-rules paths, not on-device inference.
 
@@ -122,5 +128,6 @@ Run-by-run results, the fix, and what is and isn't Kane: [docs/KANE.md](docs/KAN
 ## How it works
 
 - The model extracts document terms, reviews proof, and drafts change orders and exception requests. Code validates the extracted terms, computes card and payout controls, and maps provider outcomes to clauses when applicable.
-- The owner or manager approves changes to spending power. A release must match its pending approval ID, milestone, and amount. The workspace supplies the evidence SHA-256 and currency, which the action checks when provided.
+- Approval actions require access to the owner's job. For non-demo trip card issuance and exception approvals, the owner's authenticated email must also appear in the server's comma-separated `CLAUSE_POLICY_APPROVER_EMAILS`. The `dev@local.test` identity can approve in local development or preview with the mock gateway. Agent-invoked approvals pass through Agent-Native's human approval gate.
+- A release must match its pending approval ID, milestone, and amount. The workspace supplies the evidence SHA-256 and currency, which the action checks when provided.
 - The workspace and chat use typed actions in [`actions/`](./actions/). The job service lives in [`server/clause/`](./server/clause/) and stores jobs in the SQL `cl_jobs` table scoped by `owner_email`. See the [agent guide](./AGENTS.md) for the action reference and the [development guide](./DEVELOPING.md) for local checks and architecture.

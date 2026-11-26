@@ -12,7 +12,7 @@
 const TRUE_VALUES = new Set(["1", "true", "on", "yes"]);
 
 export function isContestMode(): boolean {
-  const raw = process.env.CLAUSE_CONTEST_MODE; // guard:allow-no-env-credentials — deployment mode toggle, not a credential
+  const raw = process.env.CLAUSE_CONTEST_MODE; // guard:allow-env-credential — deployment mode toggle, not a credential
   return TRUE_VALUES.has((raw ?? "").trim().toLowerCase());
 }
 

@@ -27,6 +27,22 @@ export interface PendingApproval {
   created_at: string;
 }
 
+export interface ReleaseApproval {
+  approval_id: string;
+  milestone_id: string;
+  amount: number;
+  currency?: string;
+  evidence_sha256?: string;
+}
+
+export interface ReleaseAttempt {
+  approval: ReleaseApproval;
+  payment_id: string;
+  state: "running" | "needs_review";
+  stage: "card_controls" | "mandate" | "payout";
+  started_at: string;
+}
+
 /**
  * Where AI output came from. on_device / in_cloud: the browser (Firebase AI Logic hybrid).
  * server: the server's own model call (parsedBy names gemini or anthropic). offline: the offline
@@ -80,11 +96,15 @@ export interface Job {
   aiSource?: AiSourceInfo;
   cardholder_id?: string;
   card_id?: string;
+  /** Last time a sandbox card's applied controls matched the plan. */
+  card_controls_verified_at?: string;
   releasedMilestoneIds: string[];
   rules: CardRule[];
   mandate?: JobMandateState;
   deposits?: SimulatedDeposit[];
   pending?: PendingApproval;
+  releaseAttempt?: ReleaseAttempt;
+  completedReleases?: ReleaseApproval[];
   transactions: (IssuingTransaction & { explanation?: DeclineExplanation })[];
   events: JobEvent[];
   created_at?: string;
@@ -99,20 +119,36 @@ export interface JobStore {
 }
 
 export class MemoryJobStore implements JobStore {
-  private jobs = new Map<string, Job>();
+  private jobs = new Map<string, string>();
+  private revisions = new WeakMap<Job, string>();
+
+  private read(doc: string): Job {
+    const job = JSON.parse(doc) as Job;
+    this.revisions.set(job, doc);
+    return job;
+  }
+
   async get(id: string): Promise<Job> {
-    const j = this.jobs.get(id);
-    if (!j) throw new Error(`Job ${id} not found`);
-    return structuredClone(j);
+    const doc = this.jobs.get(id);
+    if (!doc) throw new Error(`Job ${id} not found`);
+    return this.read(doc);
   }
   async list(): Promise<Job[]> {
-    return [...this.jobs.values()].map((j) => structuredClone(j));
+    return [...this.jobs.values()].map((doc) => this.read(doc));
   }
   async save(job: Job): Promise<Job> {
-    this.jobs.set(job.id, structuredClone(job));
+    if (this.jobs.get(job.id) !== this.revisions.get(job)) {
+      throw new Error("The job changed. Refresh before retrying.");
+    }
+    const doc = JSON.stringify(job);
+    this.jobs.set(job.id, doc);
+    this.revisions.set(job, doc);
     return job;
   }
   async reset(): Promise<void> {
+    if ([...this.jobs.values()].some((doc) => (JSON.parse(doc) as Job).releaseAttempt)) {
+      throw new Error("Reconcile the outstanding release before resetting these jobs.");
+    }
     this.jobs.clear();
   }
 }

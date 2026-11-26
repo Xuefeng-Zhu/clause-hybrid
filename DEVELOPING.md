@@ -9,6 +9,8 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
+The root pnpm workspace installs the web app. The [Expo app](apps/mobile/README.md) uses its own npm lockfile in `apps/mobile`.
+
 Open the URL printed by `pnpm dev` (usually `http://localhost:8080`). Choose **Continue as local dev** when prompted. Clause uses PGlite at `data/pglite` by default. Both sample workflows are available without provider keys. Follow the contractor and travel-policy walkthroughs in the [README](README.md).
 
 Run the repository checks from the project root.
@@ -20,7 +22,7 @@ pnpm build
 pnpm agent-native:doctor
 ```
 
-`pnpm typecheck` checks the generated app types and TypeScript. The test suite exercises contractor, policy, and Metal behavior with local fixtures and mocks. The doctor currently reports `no-env-credentials` findings for direct environment reads in the provider configuration, smoke script, and related code. A local build can produce artifacts while reporting those findings and missing production configuration.
+`pnpm typecheck` checks the generated app types and TypeScript. The test suite exercises contractor, policy, and Metal behavior with local fixtures and mocks. `pnpm agent-native:doctor` checks the framework's guards. A local build can report missing production database or auth settings while producing artifacts.
 
 ## Workspace and chat routes
 
@@ -73,10 +75,10 @@ The mock Airwallex gateway, mock Metal rail, and offline parsing fixtures are th
 
 Set `AWX_CLIENT_ID` and `AWX_API_KEY` in **Settings → API keys** to use the sandbox API. `AWX_CARDHOLDER_ID` can point to an existing sandbox `DELEGATE` cardholder. The server also accepts the Airwallex credentials as an environment fallback for local or deployment configuration. Use the registered secret store for user credentials. The provider adapter targets `api.sandbox.airwallex.com` and the demo uses simulated transactions.
 
-- For policy cards, the adapter first sends `PER_TRANSACTION` and `ALL_TIME` limits. If the request fails and includes both, it retries with only `PER_TRANSACTION`. Clause still records the planned trip budget. Inspect the sandbox card controls when verifying provider-side limits.
+- Policy cards require both `PER_TRANSACTION` and `ALL_TIME` limits. Clause reads back the issuer controls after a write and displays verification on the card detail. If readback fails or the controls differ, Clause attempts to close a newly issued card or freeze an existing card and reports the outcome.
 - The two-hour exception raises the card-wide `PER_TRANSACTION` cap. Clause restores the base cap during a simulated charge, before the first simulated swipe after expiry or after the next approved simulated swipe. This happens through the app's simulation flow.
 - The sandbox uses its own clock. A future after-deadline simulation can temporarily change the sandbox card's active window and then attempt to restore it. Check the resulting card controls if this step fails.
-- After a successful contractor payout, Clause attempts a simulated deposit into an Airwallex sandbox global account. The payout can succeed even if the deposit simulation fails.
+- Clause saves the Metal payout outcome before attempting a best-effort simulated deposit into an Airwallex sandbox global account.
 
 For optional provider smoke testing, supply the sandbox credentials through the command environment and run `pnpm smoke:sandbox`. It issues a sandbox card, runs the contractor sequence, and closes the card at the end of a successful run. Routine checks and the README walkthroughs use the mocks on a clean setup.
 
@@ -98,7 +100,13 @@ Contract approval can bind a testnet mandate, and milestone approval can submit 
 
 `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are registered for the Clause document workflows. Gemini takes precedence when configured. Use the Agent-Native provider setup to enable chat. Bundled inputs can fall back to offline fixtures, and offline evidence review uses declared file kinds and a filename heuristic.
 
-The current document model configuration is shared within the server process. A request without its own scoped key can inherit a previous user's value. Use dedicated test credentials in a single-user instance for provider demos while this behavior remains.
+Clause resolves Airwallex and model keys for each authenticated request. A credential-store lookup failure returns `503 credential_store_unavailable` and can be retried. Contest mode skips lookup of direct model-provider keys.
+
+### Approval and release recovery
+
+Approval actions require a signed-in job owner and the framework's human approval gate. For a signed-in policy manager to issue a trip card or approve an exception, add their email to the deployment's `CLAUSE_POLICY_APPROVER_EMAILS` list. The job must belong to that account. The built-in demo identity can approve policy fixtures locally or in an auth-disabled preview using mock Airwallex.
+
+Clause claims a milestone approval in the job record before changing the issuer controls. Matching a completed approval returns the saved job without dispatching a second payout. If a running attempt is interrupted or a provider call fails, inspect the recorded stage and payment ID via `get-job`. Verify the issuer controls and the Metal payment before taking any further action. The job holds the claim for manual reconciliation.
 
 ## Production database and authentication
 

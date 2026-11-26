@@ -8,9 +8,9 @@ import { ContractCardService } from "../server/clause/milestones/service.js";
 import { MemoryJobStore } from "../server/clause/store/jobStore.js";
 
 config.awx.mode = "sandbox";
-config.awx.clientId = process.env.AWX_CLIENT_ID ?? "";
-config.awx.apiKey = process.env.AWX_API_KEY ?? "";
-config.awx.cardholderId = process.env.AWX_CARDHOLDER_ID;
+config.awx.clientId = process.env.AWX_CLIENT_ID ?? ""; // guard:allow-env-credential — operator-supplied sandbox account for this standalone script
+config.awx.apiKey = process.env.AWX_API_KEY ?? ""; // guard:allow-env-credential — operator-supplied sandbox key for this standalone script
+config.awx.cardholderId = process.env.AWX_CARDHOLDER_ID; // guard:allow-env-credential — operator-supplied sandbox cardholder for this standalone script
 config.anthropic.apiKey = undefined; // offline fixture parsing + deterministic explainer
 
 const quote = readFileSync(new URL("../samples/quote-maple-street-cafe.txt", import.meta.url), "utf8");

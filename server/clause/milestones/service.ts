@@ -4,7 +4,8 @@ import {
   validateChangeOrderDraft,
   validateEvidenceVerdict,
 } from "../../../shared/clause-ai/validate.js";
-import type { IssuingGateway } from "../airwallex/types.js";
+import { cardControlsMatch } from "../airwallex/sandbox.js";
+import type { AuthorizationControls, CardStatus, IssuingGateway, SimulatedAuthRequest } from "../airwallex/types.js";
 import { config } from "../config.js";
 import { applyChangeOrder, draftChangeOrderWithSource } from "../contract/changeOrder.js";
 import { parseContract, type ContractSource } from "../contract/parser.js";
@@ -26,7 +27,7 @@ import {
 } from "../metal/types.js";
 import { buildCardPlan, buildPolicyCardPlan, nextMilestone } from "../policy/cardRules.js";
 import { explainDecline, explainPolicyDecline } from "../policy/declineExplainer.js";
-import type { AiSourceInfo, Job, JobEvent, JobStore } from "../store/jobStore.js";
+import type { AiSourceInfo, Job, JobEvent, JobStore, ReleaseApproval } from "../store/jobStore.js";
 import { evaluateEvidenceWithSource, type EvidenceFile } from "./evidence.js";
 
 /**
@@ -50,6 +51,13 @@ export class ContractCardService {
 
   async getJob(id: string): Promise<Job> {
     return await this.store.get(id);
+  }
+
+  async getIssuerCardState(job: Job): Promise<IssuerCardState | null> {
+    if (job.status !== "active" || !job.card_id || job.card_id.startsWith("card_mock_")) return null;
+    return this.gateway.mode === "sandbox"
+      ? await this.readIssuerCardState(job)
+      : { controlsVerified: false, status: null };
   }
 
   async createJob(src: ContractSource): Promise<Job> {
@@ -160,6 +168,7 @@ export class ContractCardService {
         nick_name: `${pt.policy_ref} ${pt.traveler}`.slice(0, 40),
         authorization_controls: plan.controls,
       });
+      this.recordControlVerification(job);
       Object.assign(job, {
         status: "active",
         cardholder_id: holder.cardholder_id,
@@ -188,6 +197,7 @@ export class ContractCardService {
       nick_name: `${job.terms.contract_ref} ${job.terms.contractor_name}`.slice(0, 40),
       authorization_controls: plan.controls,
     });
+    this.recordControlVerification(job);
     Object.assign(job, { status: "active", cardholder_id: holder.cardholder_id, card_id: card.card_id, releasedMilestoneIds: signing, rules: plan.rules });
     log(job, "terms_approved", "Owner approved extracted terms");
     log(job, "card_issued", `Card ${card.card_id} issued, limit ${job.terms.currency} ${plan.releasedAmount}`, plan.controls);
@@ -237,7 +247,7 @@ export class ContractCardService {
         const swipeTime = c.at ? Date.parse(c.at) : Date.now();
         if (!Number.isNaN(swipeTime) && swipeTime > Date.parse(job.activeException.expires_at)) {
           const basePlan = buildPolicyCardPlan(pt);
-          await this.gateway.updateCard(job.card_id!, { authorization_controls: basePlan.controls });
+          await this.applyCardControls(job, basePlan.controls);
           job.rules = basePlan.rules;
           delete job.activeException;
           log(
@@ -252,8 +262,9 @@ export class ContractCardService {
       const activeCap = job.activeException
         ? job.activeException.one_time_cap
         : pt.per_charge_cap.amount;
+      await this.verifyCurrentCardControls(job);
 
-      const txn = await this.gateway.simulateAuthorization({
+      const txn = await this.simulateCardAuthorization(job, {
         card_id: job.card_id!,
         amount: c.amount,
         currency: c.currency ?? pt.currency,
@@ -270,7 +281,7 @@ export class ContractCardService {
         log(job, "charge_approved", `Approved ${txn.currency} ${txn.amount} at ${txn.merchant_name}`);
         if (job.activeException) {
           const basePlan = buildPolicyCardPlan(pt);
-          await this.gateway.updateCard(job.card_id!, { authorization_controls: basePlan.controls });
+          await this.applyCardControls(job, basePlan.controls);
           job.rules = basePlan.rules;
           delete job.activeException;
           log(
@@ -285,7 +296,8 @@ export class ContractCardService {
       return { txn, explanation };
     }
 
-    const txn = await this.gateway.simulateAuthorization({
+    await this.verifyCurrentCardControls(job);
+    const txn = await this.simulateCardAuthorization(job, {
       card_id: job.card_id!,
       amount: c.amount,
       currency: c.currency ?? job.terms.currency,
@@ -346,7 +358,7 @@ export class ContractCardService {
   }
 
   /** Manager approves pending §3.4 exception: raises PER_TRANSACTION cap for one charge (or 2h). */
-  async approveException(jobId: string, approval_id: string): Promise<Job> {
+  async approveException(jobId: string, approval_id: string, approvedBy?: string): Promise<Job> {
     const job = await this.activeJob(jobId);
     if (job.kind !== "policy" || !job.policyTerms) {
       throw new Error("Policy exceptions only apply to travel & expense trip cards.");
@@ -370,7 +382,7 @@ export class ContractCardService {
       perTransactionCapOverride: one_time_cap,
       perTransactionClauseOverride: p.exception.clause,
     });
-    await this.gateway.updateCard(job.card_id!, { authorization_controls: plan.controls });
+    await this.applyCardControls(job, plan.controls);
     job.rules = plan.rules;
     job.activeException = {
       approval_id: p.approval_id,
@@ -385,8 +397,8 @@ export class ContractCardService {
     log(
       job,
       "exception_approved",
-      `Manager ${job.policyTerms.approver} approved ${p.exception.clause.clause_id} exception: one charge up to ${job.policyTerms.currency} ${one_time_cap} at restaurants`,
-      plan.controls,
+      `Manager approved ${p.exception.clause.clause_id} exception: one charge up to ${job.policyTerms.currency} ${one_time_cap} at restaurants`,
+      { controls: plan.controls, ...(approvedBy ? { approvedBy } : {}) },
     );
     return await this.store.save(job);
   }
@@ -451,161 +463,207 @@ export class ContractCardService {
   }
 
   /** Owner taps Approve. The approval must match what is pending, field for field. */
-  async approveRelease(
-    jobId: string,
-    approval: { approval_id: string; milestone_id: string; amount: number; currency?: string; evidence_sha256?: string },
-  ): Promise<Job> {
-    const job = await this.activeJob(jobId);
+  async approveRelease(jobId: string, approval: ReleaseApproval): Promise<Job> {
+    const job = await this.store.get(jobId);
+    const completed = job.completedReleases?.find((entry) => entry.approval_id === approval.approval_id);
+    if (completed) {
+      assertMatchingRelease(completed, approval);
+      return job;
+    }
+    assertActiveJob(job);
     const p = job.pending;
     if (!p || p.kind !== "release_milestone") throw new Error("Nothing pending to release.");
-    if (
-      p.approval_id !== approval.approval_id ||
-      p.milestone_id !== approval.milestone_id ||
-      p.amount !== approval.amount ||
-      (approval.currency !== undefined && approval.currency !== p.currency) ||
-      (approval.evidence_sha256 !== undefined && approval.evidence_sha256 !== p.evidence_sha256)
-    ) {
-      throw new Error("Approval does not match the pending release (stale or tampered). Re-review.");
-    }
+    assertMatchingRelease(p, approval);
     if (p.verdict?.verdict === "insufficient") throw new Error("Evidence was judged insufficient. Request new proof, or reject.");
-    const releasedId = p.milestone_id!;
+    const releasedId = approval.milestone_id;
+    const milestone = job.terms.milestones.find((entry) => entry.id === releasedId);
+    if (!milestone || job.kind === "policy" || job.releasedMilestoneIds.includes(releasedId)) {
+      throw new Error("The approval must match an unreleased contractor milestone.");
+    }
     const released = [...job.releasedMilestoneIds, releasedId];
     const plan = buildCardPlan(job.terms, released);
-    await this.gateway.updateCard(job.card_id!, { authorization_controls: plan.controls });
+    const binding: ReleaseApproval = {
+      approval_id: approval.approval_id,
+      milestone_id: releasedId,
+      amount: approval.amount,
+      currency: p.currency,
+      ...(p.evidence_sha256 !== undefined ? { evidence_sha256: p.evidence_sha256 } : {}),
+    };
+    job.releaseAttempt = {
+      approval: binding,
+      payment_id: `${job.id}-${releasedId}`,
+      state: "running",
+      stage: "card_controls",
+      started_at: new Date().toISOString(),
+    };
+    // Persist the claim before changing the card or dispatching a payout. A stale save
+    // cannot win this claim, including when the worker is in a different process.
+    await this.store.save(job);
+    try {
+      return await this.executeRelease(job, released, plan, milestone);
+    } catch {
+      const current = await this.store.get(jobId);
+      if (current.completedReleases?.some((entry) => entry.approval_id === approval.approval_id)) {
+        return current;
+      }
+      if (current.releaseAttempt?.approval.approval_id === approval.approval_id) {
+        current.releaseAttempt.state = "needs_review";
+        await this.store.save(current);
+      }
+      throw new Error("The release may have changed provider state. Verify the card and Metal payment before continuing.");
+    }
+  }
+
+  private async executeRelease(
+    job: Job,
+    released: string[],
+    plan: ReturnType<typeof buildCardPlan>,
+    milestone: ContractTerms["milestones"][number],
+  ): Promise<Job> {
+    const attempt = job.releaseAttempt!;
+    const releasedId = milestone.id;
+    await this.applyCardControls(job, plan.controls);
     Object.assign(job, { releasedMilestoneIds: released, rules: plan.rules });
-    delete job.pending;
     log(job, "release_approved", `Released ${releasedId}. Card limit now ${job.terms.currency} ${plan.releasedAmount}`, plan.controls);
 
-    // Execute contractor milestone payout on Metal mandate rail + treasury mirror
-    const milestone = job.terms.milestones.find((m) => m.id === releasedId);
-    if (milestone && job.kind !== "policy") {
-      if (!job.mandate) {
-        const terms = contractToMandateTerms(job);
-        const issued = await this.metal.issueMandate(job, terms);
-        job.mandate = {
-          mode: this.metal.mode,
-          mandateId: issued.mandateId,
-          version: issued.version,
-          ...(issued.credentialFile ? { credentialFile: issued.credentialFile } : {}),
-          ...(issued.txHash ? { txHash: issued.txHash } : {}),
-          explorerUrl: issued.explorerUrl,
-          terms: issued.terms,
-          spent: issued.spent,
-          budget: issued.budget,
-          occurrencesUsed: issued.occurrencesUsed,
-          events: [],
-        };
-      }
-
-      const amountUsdz = usdToUsdz(milestone.amount);
-      const paymentId = `${job.id}-${milestone.id}`;
-      const payee = job.mandate.terms.payee;
-      const payoutRes = await this.metal.payout(job, {
-        milestoneId: milestone.id,
-        amount: amountUsdz,
-        to: payee,
-        paymentId,
-      });
-      const nowIso = new Date().toISOString();
-
-      let depositId: string | undefined;
-      if (payoutRes.outcome === "paid") {
-        job.mandate.spent = payoutRes.spent ?? round2(job.mandate.spent + amountUsdz);
-        job.mandate.occurrencesUsed =
-          payoutRes.occurrencesUsed ?? job.mandate.occurrencesUsed + 1;
-        if (payoutRes.budget !== undefined) {
-          job.mandate.budget = payoutRes.budget;
-        }
-
-        const mirrorUsd = usdzToUsd(amountUsdz);
-        const ref = payoutRes.txHash ?? paymentId;
-        try {
-          const dep = await this.gateway.simulateDeposit({
-            amount: mirrorUsd,
-            reference: ref,
-            currency: job.terms.currency,
-          });
-          depositId = dep.deposit_id;
-          job.deposits = [...(job.deposits ?? []), dep];
-          log(
-            job,
-            "treasury_deposit",
-            `Treasury mirror: ${job.terms.currency} ${mirrorUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })} deposit (${dep.payer_name})`,
-            dep,
-          );
-        } catch (err) {
-          console.warn("[Clause] Airwallex deposit simulation failed (continuing):", err);
-        }
-
-        const txDisplay = payoutRes.txHash ?? "pending";
-        log(
-          job,
-          "metal_payout",
-          `Paid ${amountUsdz.toFixed(2)} USDZ on Metal · tx ${txDisplay}`,
-          payoutRes,
-        );
-        job.mandate.events.push({
-          id: `mev_${randomUUID().slice(0, 8)}`,
-          at: nowIso,
-          kind: "payout",
-          outcome: "paid",
-          milestoneId: milestone.id,
-          amount: amountUsdz,
-          amountUsd: milestone.amount,
-          to: payee,
-          clause: milestone.clause,
-          ...(payoutRes.txHash ? { txHash: payoutRes.txHash } : {}),
-          explorerUrl: payoutRes.explorerUrl ?? null,
-          ...(depositId ? { depositId } : {}),
-          detail: `Paid ${amountUsdz.toFixed(2)} USDZ ($${milestone.amount.toLocaleString("en-US")}) for ${milestone.id} · tx ${txDisplay.slice(0, 10)}…`,
-        });
-      } else if (payoutRes.outcome === "refused") {
-        const cited = explainMandateRefusal(payoutRes.reason, job.mandate.terms, job.terms);
-        log(
-          job,
-          "metal_refused",
-          `Refused ${amountUsdz.toFixed(2)} USDZ payout for ${milestone.id} on Metal: ${payoutRes.reason} (${cited.clause.clause_id})`,
-          { ...payoutRes, clause: cited.clause },
-        );
-        job.mandate.events.push({
-          id: `mev_${randomUUID().slice(0, 8)}`,
-          at: nowIso,
-          kind: "refused",
-          outcome: "refused",
-          milestoneId: milestone.id,
-          amount: amountUsdz,
-          amountUsd: milestone.amount,
-          to: payee,
-          ...(payoutRes.reason ? { reason: payoutRes.reason } : {}),
-          clause: cited.clause,
-          ...(payoutRes.txHash ? { txHash: payoutRes.txHash } : {}),
-          explorerUrl: payoutRes.explorerUrl ?? null,
-          detail: `Refused ${amountUsdz.toFixed(2)} USDZ for ${milestone.id}: ${payoutRes.reason} (${cited.clause.clause_id})`,
-        });
-      } else {
-        log(
-          job,
-          "metal_payout",
-          `Pending ${amountUsdz.toFixed(2)} USDZ payout for ${milestone.id} on Metal`,
-          payoutRes,
-        );
-      }
-
-      milestone.payout = {
-        outcome: payoutRes.outcome,
-        amount: amountUsdz,
-        amount_usd: milestone.amount,
-        to: payee,
-        payment_id: paymentId,
-        ...(payoutRes.txHash ? { tx_hash: payoutRes.txHash } : {}),
-        explorer_url: payoutRes.explorerUrl ?? null,
-        ...(payoutRes.reason ? { reason: payoutRes.reason } : {}),
-        ...(depositId ? { deposit_id: depositId } : {}),
-        at: nowIso,
+    if (!job.mandate) {
+      attempt.stage = "mandate";
+      await this.store.save(job);
+      const terms = contractToMandateTerms(job);
+      const issued = await this.metal.issueMandate(job, terms);
+      job.mandate = {
+        mode: this.metal.mode,
+        mandateId: issued.mandateId,
+        version: issued.version,
+        ...(issued.credentialFile ? { credentialFile: issued.credentialFile } : {}),
+        ...(issued.txHash ? { txHash: issued.txHash } : {}),
+        explorerUrl: issued.explorerUrl,
+        terms: issued.terms,
+        spent: issued.spent,
+        budget: issued.budget,
+        occurrencesUsed: issued.occurrencesUsed,
+        events: [],
       };
     }
 
-    return await this.store.save(job);
+    const amountUsdz = usdToUsdz(milestone.amount);
+    const paymentId = attempt.payment_id;
+    const payee = job.mandate.terms.payee;
+    attempt.stage = "payout";
+    await this.store.save(job);
+    const payoutRes = await this.metal.payout(job, {
+      milestoneId: milestone.id,
+      amount: amountUsdz,
+      to: payee,
+      paymentId,
+    });
+    const nowIso = new Date().toISOString();
+
+    let payoutEventId: string | undefined;
+    if (payoutRes.outcome === "paid") {
+      job.mandate.spent = payoutRes.spent ?? round2(job.mandate.spent + amountUsdz);
+      job.mandate.occurrencesUsed =
+        payoutRes.occurrencesUsed ?? job.mandate.occurrencesUsed + 1;
+      if (payoutRes.budget !== undefined) {
+        job.mandate.budget = payoutRes.budget;
+      }
+
+      payoutEventId = `mev_${randomUUID().slice(0, 8)}`;
+      const txDisplay = payoutRes.txHash ?? "pending";
+      log(
+        job,
+        "metal_payout",
+        `Paid ${amountUsdz.toFixed(2)} USDZ on Metal · tx ${txDisplay}`,
+        payoutRes,
+      );
+      job.mandate.events.push({
+        id: payoutEventId,
+        at: nowIso,
+        kind: "payout",
+        outcome: "paid",
+        milestoneId: milestone.id,
+        amount: amountUsdz,
+        amountUsd: milestone.amount,
+        to: payee,
+        clause: milestone.clause,
+        ...(payoutRes.txHash ? { txHash: payoutRes.txHash } : {}),
+        explorerUrl: payoutRes.explorerUrl ?? null,
+        detail: `Paid ${amountUsdz.toFixed(2)} USDZ ($${milestone.amount.toLocaleString("en-US")}) for ${milestone.id} · tx ${txDisplay.slice(0, 10)}…`,
+      });
+    } else if (payoutRes.outcome === "refused") {
+      const cited = explainMandateRefusal(payoutRes.reason, job.mandate.terms, job.terms);
+      log(
+        job,
+        "metal_refused",
+        `Refused ${amountUsdz.toFixed(2)} USDZ payout for ${milestone.id} on Metal: ${payoutRes.reason} (${cited.clause.clause_id})`,
+        { ...payoutRes, clause: cited.clause },
+      );
+      job.mandate.events.push({
+        id: `mev_${randomUUID().slice(0, 8)}`,
+        at: nowIso,
+        kind: "refused",
+        outcome: "refused",
+        milestoneId: milestone.id,
+        amount: amountUsdz,
+        amountUsd: milestone.amount,
+        to: payee,
+        ...(payoutRes.reason ? { reason: payoutRes.reason } : {}),
+        clause: cited.clause,
+        ...(payoutRes.txHash ? { txHash: payoutRes.txHash } : {}),
+        explorerUrl: payoutRes.explorerUrl ?? null,
+        detail: `Refused ${amountUsdz.toFixed(2)} USDZ for ${milestone.id}: ${payoutRes.reason} (${cited.clause.clause_id})`,
+      });
+    } else {
+      log(
+        job,
+        "metal_payout",
+        `Pending ${amountUsdz.toFixed(2)} USDZ payout for ${milestone.id} on Metal`,
+        payoutRes,
+      );
+    }
+
+    milestone.payout = {
+      outcome: payoutRes.outcome,
+      amount: amountUsdz,
+      amount_usd: milestone.amount,
+      to: payee,
+      payment_id: paymentId,
+      ...(payoutRes.txHash ? { tx_hash: payoutRes.txHash } : {}),
+      explorer_url: payoutRes.explorerUrl ?? null,
+      ...(payoutRes.reason ? { reason: payoutRes.reason } : {}),
+      at: nowIso,
+    };
+
+    job.completedReleases = [...(job.completedReleases ?? []), attempt.approval];
+    delete job.pending;
+    delete job.releaseAttempt;
+    await this.store.save(job);
+    if (!payoutEventId) return job;
+
+    // The payout receipt is durable even if the optional sandbox deposit fails or times out.
+    try {
+      const dep = await this.gateway.simulateDeposit({
+        amount: usdzToUsd(amountUsdz),
+        reference: payoutRes.txHash ?? paymentId,
+        currency: job.terms.currency,
+      });
+      const current = await this.store.get(job.id);
+      const payout = current.terms.milestones.find((entry) => entry.payout?.payment_id === paymentId)?.payout;
+      const event = current.mandate?.events.find((entry) => entry.id === payoutEventId);
+      if (payout) payout.deposit_id = dep.deposit_id;
+      if (event) event.depositId = dep.deposit_id;
+      current.deposits = [...(current.deposits ?? []), dep];
+      log(
+        current,
+        "treasury_deposit",
+        `Treasury mirror: ${dep.currency} ${dep.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })} deposit (${dep.payer_name})`,
+        dep,
+      );
+      return await this.store.save(current);
+    } catch {
+      console.warn("[Clause] Airwallex deposit simulation could not be recorded.");
+      return job;
+    }
   }
 
   async rejectPending(jobId: string, reason: string): Promise<Job> {
@@ -674,7 +732,7 @@ export class ContractCardService {
     if (!p || p.kind !== "change_order" || p.approval_id !== approval_id || !p.change_order) throw new Error("No matching change order pending.");
     const terms = applyChangeOrder(job.terms, p.change_order);
     const plan = buildCardPlan(terms, job.releasedMilestoneIds);
-    await this.gateway.updateCard(job.card_id!, { authorization_controls: plan.controls });
+    await this.applyCardControls(job, plan.controls);
     Object.assign(job, { terms, rules: plan.rules });
     delete job.pending;
     log(job, "change_order_approved", `Change order applied. Deadline ${terms.deadline.date}, total ${terms.currency} ${terms.total_amount}`, plan.controls);
@@ -857,7 +915,9 @@ export class ContractCardService {
   }
 
   async freeze(jobId: string, frozen: boolean): Promise<Job> {
-    const job = await this.activeJob(jobId);
+    const job = await this.store.get(jobId);
+    assertActiveJob(job, frozen);
+    if (!frozen) await this.verifyCurrentCardControls(job);
     await this.gateway.updateCard(job.card_id!, { card_status: frozen ? "INACTIVE" : "ACTIVE" });
     log(job, "card_frozen", frozen ? "Card frozen by owner" : "Card unfrozen by owner");
     return await this.store.save(job);
@@ -879,7 +939,7 @@ export class ContractCardService {
 
   private async activeJob(id: string): Promise<Job> {
     const job = await this.store.get(id);
-    if (job.status !== "active" || !job.card_id) throw new Error(`Job ${id} is ${job.status}; issue the card first.`);
+    assertActiveJob(job);
     return job;
   }
 
@@ -906,6 +966,95 @@ export class ContractCardService {
       };
     }
     return job;
+  }
+
+  private recordControlVerification(job: Job): void {
+    if (this.gateway.mode === "sandbox") {
+      job.card_controls_verified_at = new Date().toISOString();
+    }
+  }
+
+  private async applyCardControls(job: Job, controls: AuthorizationControls): Promise<void> {
+    try {
+      await this.gateway.updateCard(job.card_id!, { authorization_controls: controls });
+    } catch (error) {
+      await this.invalidateControlVerification(job);
+      throw error;
+    }
+    this.recordControlVerification(job);
+  }
+
+  private async simulateCardAuthorization(job: Job, request: SimulatedAuthRequest) {
+    try {
+      return await this.gateway.simulateAuthorization(request);
+    } catch (error) {
+      await this.invalidateControlVerification(job);
+      throw error;
+    }
+  }
+
+  private async verifyCurrentCardControls(job: Job): Promise<void> {
+    if (this.gateway.mode !== "sandbox") return;
+    const issuer = await this.readIssuerCardState(job);
+    if (issuer.controlsVerified && issuer.status !== "CLOSED") {
+      this.recordControlVerification(job);
+      return;
+    }
+    await this.invalidateControlVerification(job);
+    throw new Error("Airwallex could not confirm the current card controls. Review the card before continuing.");
+  }
+
+  private async readIssuerCardState(job: Job): Promise<IssuerCardState> {
+    const exception = job.activeException;
+    const plan = job.kind === "policy" && job.policyTerms
+      ? buildPolicyCardPlan(job.policyTerms, exception ? {
+          perTransactionCapOverride: exception.one_time_cap,
+          perTransactionClauseOverride: exception.clause,
+        } : undefined)
+      : buildCardPlan(job.terms, job.releasedMilestoneIds);
+    try {
+      const card = await this.gateway.getCard(job.card_id!);
+      return {
+        controlsVerified: cardControlsMatch(plan.controls, card.authorization_controls),
+        status: card.card_status ?? null,
+      };
+    } catch {
+      return { controlsVerified: false, status: null };
+    }
+  }
+
+  private async invalidateControlVerification(job: Job): Promise<void> {
+    if (this.gateway.mode === "sandbox" && job.card_controls_verified_at) {
+      delete job.card_controls_verified_at;
+      await this.store.save(job);
+    }
+  }
+}
+
+interface IssuerCardState {
+  controlsVerified: boolean;
+  status: CardStatus | null;
+}
+
+function assertActiveJob(job: Job, allowEmergencyFreeze = false): void {
+  if (job.status !== "active" || !job.card_id) {
+    throw new Error(`Job ${job.id} is ${job.status}; issue the card first.`);
+  }
+  if (job.releaseAttempt && !allowEmergencyFreeze) {
+    throw new Error(`Release ${job.releaseAttempt.approval.approval_id} is in progress or requires provider reconciliation.`);
+  }
+}
+
+function assertMatchingRelease(
+  binding: Partial<ReleaseApproval>,
+  approval: ReleaseApproval,
+): void {
+  if (binding.approval_id !== approval.approval_id
+    || binding.milestone_id !== approval.milestone_id
+    || binding.amount !== approval.amount
+    || (approval.currency !== undefined && binding.currency !== approval.currency)
+    || (approval.evidence_sha256 !== undefined && binding.evidence_sha256 !== approval.evidence_sha256)) {
+    throw new Error("Approval does not match the pending release (stale or tampered). Re-review.");
   }
 }
 

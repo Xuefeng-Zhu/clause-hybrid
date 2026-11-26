@@ -1,5 +1,5 @@
 import { createGateway, type IssuingGateway } from "./airwallex/index.js";
-import { config, resolveMetalMode, syncScopedCredentials } from "./config.js";
+import { config, getProviderConfig, loadProviderConfig, resolveMetalMode } from "./config.js";
 import { llmModelLabel } from "./llm.js";
 import { isContestMode } from "./contest-mode.js";
 import {
@@ -19,9 +19,9 @@ let mockMetalRail: MetalRail | undefined;
 const store = new SqlJobStore();
 
 export async function getService(): Promise<ContractCardService> {
-  await syncScopedCredentials();
+  const { awx } = await loadProviderConfig();
   const gateway =
-    config.awx.mode === "sandbox"
+    awx.mode === "sandbox"
       ? createGateway()
       : (mockGateway ??= createGateway());
   const metalMode = resolveMetalMode();
@@ -40,10 +40,11 @@ export async function resetRuntime(): Promise<void> {
 }
 
 export function runtimeInfo() {
+  const { awx } = getProviderConfig();
   const metalMode = resolveMetalMode();
   return {
-    airwallexMode: config.awx.mode,
-    airwallexBaseUrl: config.awx.mode === "sandbox" ? config.awx.baseUrl : "in-memory mock",
+    airwallexMode: awx.mode,
+    airwallexBaseUrl: awx.mode === "sandbox" ? awx.baseUrl : "in-memory mock",
     metalMode,
     metalNetwork: metalMode === "testnet" ? "Metal Testnet (*USDZ)" : "in-memory mock",
     model: llmModelLabel(),

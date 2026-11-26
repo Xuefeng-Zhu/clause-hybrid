@@ -186,6 +186,7 @@ export function ClauseJobWorkspace() {
     jobs.find((j) => j.id === activeJobId) ??
     null;
   const job = (jobQuery.data?.job as ClauseJob | undefined) ?? null;
+  const issuerCard = jobQuery.data?.issuerCard;
 
   // Clause actions
   const parseQuoteMut = useActionMutation("parse-quote");
@@ -305,6 +306,7 @@ export function ClauseJobWorkspace() {
       onDone?.(result);
     } catch (err) {
       if (activeOpRef.current?.id !== id) return;
+      if (activeJobId) void jobQuery.refetch();
       const msg =
         actionErrorMessage(err) ??
         (err instanceof Error ? err.message : "Operation failed.");
@@ -318,6 +320,8 @@ export function ClauseJobWorkspace() {
   }
 
   const isCardFrozen = (() => {
+    if (issuerCard?.status === "INACTIVE" || issuerCard?.status === "CLOSED") return true;
+    if (issuerCard?.status === "ACTIVE") return false;
     if (!job?.events?.length) return false;
     for (let i = job.events.length - 1; i >= 0; i--) {
       const ev = job.events[i];
@@ -707,6 +711,7 @@ export function ClauseJobWorkspace() {
   async function handleApproveRelease() {
     if (
       !activeJobId ||
+      job?.releaseAttempt ||
       !pendingRelease ||
       !pendingRelease.milestone_id ||
       pendingRelease.amount === undefined
@@ -1385,6 +1390,7 @@ export function ClauseJobWorkspace() {
                   job={job}
                   summary={summary}
                   isFrozen={isCardFrozen}
+                  issuerControlsVerified={issuerCard?.controlsVerified}
                   busy={Boolean(busyLabel)}
                   activeClauseId={activeClauseId}
                   onHoverClause={setHoveredClauseId}

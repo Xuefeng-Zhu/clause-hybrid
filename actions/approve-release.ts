@@ -2,6 +2,7 @@ import { defineAction } from "@agent-native/core/action";
 import { z } from "zod";
 
 import { getService, summarize } from "../server/clause/app.js";
+import { assertSignedInApprover } from "../server/clause/approvalAccess.js";
 
 export default defineAction({
   description: "OWNER APPROVAL: release the pending milestone. The approval must match the pending one field for field (approval id, milestone, amount, currency, evidence hash) or it is rejected as stale. Code then raises the card's ALL_TIME limit to the new released total. Only call when the owner explicitly approves.",
@@ -13,6 +14,8 @@ export default defineAction({
     currency: z.string().optional(),
     evidenceSha256: z.string().optional(),
   }),
+  authorize: assertSignedInApprover,
+  needsApproval: true,
   run: async ({ jobId, approvalId, milestoneId, amount, currency, evidenceSha256 }) => {
     const job = await (await getService()).approveRelease(jobId, {
       approval_id: approvalId,

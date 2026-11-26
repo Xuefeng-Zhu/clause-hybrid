@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { config, assertSandboxCredentials } from "../config.js";
+import { assertSandboxCredentials, getProviderConfig } from "../config.js";
+
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Thin REST client for the Airwallex sandbox.
@@ -13,16 +15,18 @@ export class AirwallexClient {
   private tokenExpiresAt = 0;
 
   constructor(
-    private readonly baseUrl = config.awx.baseUrl,
-    private readonly clientId = config.awx.clientId,
-    private readonly apiKey = config.awx.apiKey,
+    private readonly baseUrl = getProviderConfig().awx.baseUrl,
+    private readonly clientId = getProviderConfig().awx.clientId,
+    private readonly apiKey = getProviderConfig().awx.apiKey,
   ) {}
 
-  async login(): Promise<string> {
-    assertSandboxCredentials();
+  async login(signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)): Promise<string> {
+    const { baseUrl, clientId, apiKey } = this;
+    assertSandboxCredentials({ baseUrl, clientId, apiKey });
     const res = await fetch(`${this.baseUrl}/api/v1/authentication/login`, {
       method: "POST",
       headers: { "x-client-id": this.clientId, "x-api-key": this.apiKey },
+      signal,
     });
     if (!res.ok) throw new AirwallexError(res.status, await safeJson(res), "authentication/login");
     const body = (await res.json()) as { token: string };
@@ -31,8 +35,8 @@ export class AirwallexClient {
     return body.token;
   }
 
-  private async authHeader(): Promise<Record<string, string>> {
-    if (!this.token || Date.now() >= this.tokenExpiresAt) await this.login();
+  private async authHeader(signal: AbortSignal): Promise<Record<string, string>> {
+    if (!this.token || Date.now() >= this.tokenExpiresAt) await this.login(signal);
     return { Authorization: `Bearer ${this.token}` };
   }
 
@@ -47,20 +51,27 @@ export class AirwallexClient {
     return this.send<T>("POST", path, payload);
   }
 
-  private async send<T>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {
+  private async send<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    attempt = 0,
+    signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  ): Promise<T> {
     const res = await fetch(`${this.baseUrl}/api/v1${path}`, {
       method,
-      headers: { "content-type": "application/json", ...(await this.authHeader()) },
+      headers: { "content-type": "application/json", ...(await this.authHeader(signal)) },
+      signal,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     // Sandbox rate limits: 20 rps global, 10/endpoint. Back off on 429 (same request_id = safe retry).
     if (res.status === 429 && attempt < 3) {
       await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
-      return this.send<T>(method, path, body, attempt + 1);
+      return this.send<T>(method, path, body, attempt + 1, signal);
     }
     if (res.status === 401 && attempt === 0) {
       this.token = undefined;
-      return this.send<T>(method, path, body, attempt + 1);
+      return this.send<T>(method, path, body, attempt + 1, signal);
     }
     if (!res.ok) throw new AirwallexError(res.status, await safeJson(res), path);
     return (await res.json()) as T;

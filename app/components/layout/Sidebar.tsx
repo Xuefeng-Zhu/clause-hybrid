@@ -38,6 +38,7 @@ const CHAT_STORAGE_KEY = "chat";
 const CHAT_ACTIVE_THREAD_KEY = `agent-chat-active-thread:${CHAT_STORAGE_KEY}`;
 
 interface SidebarProps {
+  chatEnabled: boolean;
   collapsed?: boolean;
   collapsible?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -303,6 +304,7 @@ function ChatThreadsSection({ collapsed }: { collapsed: boolean }) {
 }
 
 export function Sidebar({
+  chatEnabled,
   collapsed = false,
   collapsible = true,
   onCollapsedChange,
@@ -406,7 +408,7 @@ export function Sidebar({
         )}
       >
         <JobsNavLink collapsed={collapsed} />
-        <ChatThreadsSection collapsed={collapsed} />
+        {chatEnabled ? <ChatThreadsSection collapsed={collapsed} /> : null}
       </nav>
 
       <div className="mt-auto shrink-0 border-t border-sidebar-border p-2">

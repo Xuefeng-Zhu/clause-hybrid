@@ -7,10 +7,11 @@ import { AgentToggleButton } from "@agent-native/toolkit/app/chat";
 import { MobileAppBar } from "./MobileAppBar";
 
 interface HeaderProps {
+  chatEnabled: boolean;
   onOpenMobileSidebar: () => void;
 }
 
-export function Header({ onOpenMobileSidebar }: HeaderProps) {
+export function Header({ chatEnabled, onOpenMobileSidebar }: HeaderProps) {
   const title = useHeaderTitle();
   const actions = useHeaderActions();
 
@@ -22,7 +23,7 @@ export function Header({ onOpenMobileSidebar }: HeaderProps) {
       actions={
         <>
           {actions}
-          <AgentToggleButton />
+          {chatEnabled ? <AgentToggleButton /> : null}
         </>
       }
     />

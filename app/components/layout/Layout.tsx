@@ -39,6 +39,7 @@ const Header = lazy(() =>
 );
 
 interface LayoutProps {
+  chatEnabled: boolean;
   children: React.ReactNode;
 }
 
@@ -74,16 +75,16 @@ function EndVoiceChatOutsideChat() {
   return null;
 }
 
-export function Layout({ children }: LayoutProps) {
+export function Layout({ chatEnabled, children }: LayoutProps) {
   return (
     <RealtimeVoiceModeProvider browserTabId={TAB_ID}>
       <EndVoiceChatOutsideChat />
-      <LayoutShell>{children}</LayoutShell>
+      <LayoutShell chatEnabled={chatEnabled}>{children}</LayoutShell>
     </RealtimeVoiceModeProvider>
   );
 }
 
-function LayoutShell({ children }: LayoutProps) {
+function LayoutShell({ chatEnabled, children }: LayoutProps) {
   const location = useLocation();
   const t = useT();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -95,12 +96,14 @@ function LayoutShell({ children }: LayoutProps) {
   const chatHomeHandoffActive = useAgentChatHomeHandoff({
     storageKey: "chat",
     activePath: location.pathname,
-    enabled: !isChatRoute,
+    enabled: chatEnabled && !isChatRoute,
   });
-  const chatHomeHandoffPending = isAgentChatHomeHandoffActive("chat");
+  const chatHomeHandoffPending =
+    chatEnabled && isAgentChatHomeHandoffActive("chat");
   useAgentChatHomeHandoffLinks({
     storageKey: "chat",
     isChatPath: isChatPathname,
+    enabled: chatEnabled,
     requireActiveHandoff: true,
   });
 
@@ -160,7 +163,10 @@ function LayoutShell({ children }: LayoutProps) {
         />
       ) : settingsOwnsChrome ? null : (
         <Suspense fallback={<div className="h-12 shrink-0" />}>
-          <Header onOpenMobileSidebar={openMobileSidebar} />
+          <Header
+            chatEnabled={chatEnabled}
+            onOpenMobileSidebar={openMobileSidebar}
+          />
         </Suspense>
       )}
       <main className="agent-native-app-main min-w-0 flex-1 overflow-y-auto overscroll-contain">
@@ -178,6 +184,7 @@ function LayoutShell({ children }: LayoutProps) {
             className="agent-layout-left-drawer hidden md:block"
           >
             <Sidebar
+              chatEnabled={chatEnabled}
               collapsed={sidebarCollapsed}
               onCollapsedChange={setSidebarCollapsed}
             />
@@ -194,12 +201,23 @@ function LayoutShell({ children }: LayoutProps) {
             <SheetDescription className="sr-only">
               {t("navigation.navigationDescription")}
             </SheetDescription>
-            <Sidebar collapsed={false} collapsible={false} />
+            <Sidebar
+              chatEnabled={chatEnabled}
+              collapsed={false}
+              collapsible={false}
+            />
           </SheetContent>
         </Sheet>
-        {isChatRoute ? (
+        {chatEnabled && !isChatRoute ? (
+          <AgentInspector
+            chatHomeHandoffActive={chatHomeHandoffActive}
+            chatHomeHandoffPending={chatHomeHandoffPending}
+          >
+            {contentFrame}
+          </AgentInspector>
+        ) : (
           <div
-            data-agent-chat-canvas="true"
+            data-agent-chat-canvas={isChatRoute ? "true" : undefined}
             data-chat-header-in-app-bar={
               chatHeaderInAppBar ? "true" : undefined
             }
@@ -207,13 +225,6 @@ function LayoutShell({ children }: LayoutProps) {
           >
             {contentFrame}
           </div>
-        ) : (
-          <AgentInspector
-            chatHomeHandoffActive={chatHomeHandoffActive}
-            chatHomeHandoffPending={chatHomeHandoffPending}
-          >
-            {contentFrame}
-          </AgentInspector>
         )}
       </div>
     </HeaderActionsProvider>

@@ -2,6 +2,7 @@
 # Run the Kane CLI flows in kane/flows/ against the app and collect failures for the coding agent.
 #   KANE_URL=http://localhost:8080/home kane/run-flows.sh 02      # one flow (start here)
 #   KANE_URL=http://localhost:8080/home kane/run-flows.sh         # flows 01-04
+#   KANE_URL=http://localhost:8080/home KANE_MAX_STEPS=45 kane/run-flows.sh 06  # travel exception and CSV
 # KANE_URL: the URL your dev server prints, plus /home. KANE_PROOF_FILE (flow 04): defaults to
 # kane/fixtures/stock-not-job-site.jpg. On failure, kane/out/FAILURES.md gets Kane's last steps
 # (see kane/AGENT_LOOP.md). Flow 05 (offline) is a manual Chrome DevTools check, not run here.
@@ -16,7 +17,7 @@ mkdir -p out; : > out/FAILURES.md; fails=0
 # kane-cli's runner exits early when its stdin is closed (seen with 0.10.4 under a non-interactive shell),
 # so give it a stdin that stays open but never sends anything. It is a background process substitution,
 # not a pipeline, so each flow's result returns as soon as kane-cli exits.
-exec {KEEP_STDIN}< <(exec sleep 2147483647)
+exec 3< <(exec sleep 2147483647)
 KEEP_PID=$!
 trap 'kill "$KEEP_PID" 2>/dev/null' EXIT
 
@@ -30,7 +31,7 @@ for id in "${flows[@]}"; do
   echo "▶ $name"
   kane-cli run "$obj" --url "$URL" --agent --final-validation on \
     --max-steps "${KANE_MAX_STEPS:-30}" --timeout 300 ${KANE_CDP:+--cdp-endpoint "$KANE_CDP"} \
-    <&"$KEEP_STDIN" > "out/$name.ndjson" 2> "out/$name.err"
+    <&3 > "out/$name.ndjson" 2> "out/$name.err"
   code=$?
   if [ $code -eq 0 ]; then echo "  ✓ pass"; else
     fails=$((fails+1)); echo "  ✗ fail (exit $code)"

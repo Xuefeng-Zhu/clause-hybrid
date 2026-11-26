@@ -33,7 +33,7 @@ export interface ShareTermsResponse {
 }
 
 export function getClauseServerUrl(): string {
-  const raw = process.env.EXPO_PUBLIC_CLAUSE_SERVER_URL;
+  const raw = process.env.EXPO_PUBLIC_CLAUSE_SERVER_URL; // guard:allow-env-credential — public Expo build-time server URL
   return typeof raw === "string" ? raw.trim().replace(/\/+$/, "") : "";
 }
 
