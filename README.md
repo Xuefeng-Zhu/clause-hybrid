@@ -53,9 +53,9 @@ Start each walkthrough with a fresh **New job**. The examples below use the mock
 
 ## Browser testing with Kane CLI
 
-Kane caught a real bug in the first walkthrough. The card correctly declined the **$6,000** charge, but **Explain** opened an empty chat. The fix moved the answer into the transaction row and validates it against the card rules. Kane passed on rerun. [Fix commit](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/22daf676)
+Kane exposed a real bug in the first walkthrough. The card correctly declined the **$6,000** charge, but **Explain** opened an empty chat. The fix moved the answer into the transaction row and validates it against the card rules. Kane passed on rerun. [Fix commit](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/22daf676)
 
-Kane flows 01–04 cover quote extraction, the decline explanation, change orders, and rejected proof. The offline check ran manually. The travel exception and CSV flow passed in desktop Chrome against a local build with mocks. It still awaits a hosted Kane run. [Commands and run history](./docs/KANE.md)
+Kane flows 01–04 cover quote extraction, the decline explanation, change orders, and rejected proof. The offline check ran manually. The travel exception and CSV flow (06) was verified manually in Chrome on a local mock build; it has not yet been run with Kane. On Nov 24, a Kane failure on flow 01 went through `FAILURES.md` to Codex CLI, which fixed the flow text, and Kane's rerun passed. [Commands and run history](./docs/KANE.md)
 
 ## More docs
 

@@ -45,7 +45,7 @@ The default flow 04 photo was generated with ImageMagick for this repo. Offline 
 | [03 · Change order](../kane/flows/03-change-order.txt) | Kane | The quartz change order proposes +$800 and moves the deadline from Dec 18 to Dec 23. Totals stay at their original values while approval is pending. |
 | [04 · Rejected proof](../kane/flows/04-proof-rejected.txt) | Kane | `Doesn’t meet requirements`, a source badge, `Proof rejected`, `Held $5,000`, and a disabled release control. The released amount stays at $4,000. |
 | [05 · Offline](../kane/flows/05-offline.txt) | Manual Chrome DevTools | `Needs a connection. Nothing was sent.` The Kane CLI 0.10.4 runner lacks network emulation for this check. |
-| [06 · Travel exception and CSV](../kane/flows/06-travel-exception-csv.txt) | Local Chrome passed. Hosted Kane run pending. | One $480 dinner is approved after a $500 exception, the $300 base cap returns, the other two attempts decline, and CSV export is confirmed with $0 owed. Vitest checks the CSV contents. |
+| [06 · Travel exception and CSV](../kane/flows/06-travel-exception-csv.txt) | Manual check in Chrome on a local mock build. Not yet run with Kane. | One $480 dinner is approved after a $500 exception, the $300 base cap returns, the other two attempts decline, and CSV export is confirmed with $0 owed. Vitest checks the CSV contents. |
 
 ### Inference and privacy checks
 
@@ -105,7 +105,7 @@ The runner wrote `kane/out/FAILURES.md`. Codex CLI ran via `codex exec` (0.171.0
 
 Codex removed that closing sentence from flow 01 and kept every explicit assertion. All 122 Vitest tests and `tsc --noEmit` passed in both Codex's verification and an independent run. Flow 01 then passed in 281 seconds with a fresh database and browser profile. [Fix `db51d20`](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/db51d20)
 
-Flows 02 and 04 also ended with catch-all sentences during this run. Flow 02 now lists its checks directly and opens **Sandbox → Custom authorization**.
+Flows 02 and 04 also ended with catch-all sentences during this run. Flow 02 now lists its checks directly and opens **Sandbox → Custom authorization**. That edit landed on Nov 26, after Run 4, and has not been re-run with Kane. Flow 04 still ends with its catch-all sentence, as it did when it passed Run 4.
 
 ## How the fixes were made
 

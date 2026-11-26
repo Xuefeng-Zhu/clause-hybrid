@@ -39,6 +39,7 @@ data/.sessions.json
 learnings.md
 
 .vercel/
+.firebase/
 .agent-native/
 data/*.lock
 
