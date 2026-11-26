@@ -1,133 +1,66 @@
 # Clause
 
-[Open the live demo](https://8080-agrbns4donht7p3tyd2gpj43qe.instabox.tech/home)
+[Live demo](https://8080-agrbns4donht7p3tyd2gpj43qe.instabox.tech/home) · [Kane CLI showcase](https://www.kaneclihack.sh/o/p/xuefeng-zhu) · [Local setup](#run-locally)
 
-Clause turns a contractor quote or an approved business trip into an Airwallex virtual card with spending controls derived from the source document. Contract cards use a cumulative cap based on released milestones and pair with a Metal payout mandate. Trip cards use a trip budget, a per-charge cap, and manager-approved exceptions. Clause shows the source clauses behind each planned rule and cites the applicable clause when a decline maps to one.
+Clause turns contractor quotes and approved business trips into virtual cards with spending rules tied to the source document. For contractors, the card cap tracks released milestones and a Metal mandate governs payouts. For travel, the card has a trip budget, a per-charge limit, and manager-approved exceptions. When a charge breaks a rule, you can see the clause behind the decline.
 
-Try the sample Maple Street Café quote, issue the mock card, then submit a **$6,000** charge from **Sandbox → Custom authorization**. Hover over the decline and choose **Explain** to see how §1.1 limits spending to the **$4,000** released so far.
+## Try the live demo
 
-The hosted demo runs in contest mode on a shared InstaBox sandbox that auto-pauses after 30 idle minutes. Use the bundled samples there. [InstaBox deployment and health checks](./deploy/README-instabox-preview.md)
+1. Open **New job → Use sample quote** and select **Read quote**. Review the highlighted terms, then choose **Approve & issue card**. The signing milestone releases **$4,000**.
+2. Open **Sandbox → Custom authorization**. Keep **Builders Supply Co.** and MCC **5211**, enter **6000**, and select **Send authorization**.
+3. Close the drawer. Hover over the declined charge and choose **Explain**. The inline explanation cites **§1.1** and shows why the charge exceeded the released cap.
 
-## Quick start
+The public preview uses simulated cards and payouts in a shared workspace. Use the bundled samples. The InstaBox machine auto-pauses after 30 idle minutes. [Preview access and deployment](./deploy/README-instabox-preview.md)
 
-Use Node.js 22.22.0 or later and pnpm 10.29.1, the version pinned in [package.json](./package.json). Corepack selects that version for the commands below.
+## Run locally
+
+Use Node.js 22.22.0 or later and pnpm 10.29.1. Corepack selects the version pinned in [package.json](./package.json).
 
 ```bash
 corepack pnpm install --frozen-lockfile
 corepack pnpm dev
 ```
 
-Open the URL the dev server prints (for example `➜  Local:   http://localhost:8080/`; Vite picks the next free port if 8080 is taken). On the welcome screen, choose **Continue as local dev** to reach the **Contract Jobs** workspace at `/home`.
+Open the URL printed by the dev server and choose **Continue as local dev** if prompted. A clean setup runs both walkthroughs with local mocks and bundled parsing fixtures, without provider keys. Open **Sandbox → Environment & parser** to check the active card gateway and parser. See the [development guide](./DEVELOPING.md) for checks, provider setup, and the separate Expo app.
 
-Both walkthroughs use the default in-memory Airwallex and Metal mocks and the bundled parsing fixtures. They require zero external keys. **Sandbox → Environment & parser** shows the card gateway and parser in use. The optional Clause chat sidebar and full-screen chat at `/chat` require an Agent-Native model connection. Use the chat setup prompt or **Settings → Model**.
+## Walk through both workflows
 
-## Run the demos
-
-Start each walkthrough with **New job**. Ordinary swipes in the card mock use a fixed sample date. The late presets use their own dates to show expiry declines. The Metal mock evaluates mandate expiry against the payout time.
+Start each walkthrough with a fresh **New job**. The examples below use the mocked card and payout providers.
 
 ### Contractor quote · Maple Street Café
 
-1. Choose **Use sample quote** and **Read quote** to load [the Maple Street Café quote](./samples/quote-maple-street-cafe.txt). Review its clauses and choose **Approve & issue card**. The signing milestone (M1) sets the initial cumulative card cap at **$4,000**, and approval creates a contractor payout mandate.
-2. Open **Sandbox**. Run **Dunn Lumber ($1,840.50)**, **Kirkland Taphouse ($86.40)**, then **Home Depot ($2,500)** in that order. Lumber is approved. Lunch is declined under the meals ban (§2.2). Home Depot exceeds the remaining released funds (§1.1).
-3. In **Metal payout mandate**, run **Pay contractor over the cap** and **Pay a different wallet**. The payout attempts are refused. Close the drawer.
-4. Choose **Submit proof for Milestone 2**, keep **Photos** selected, and choose **Evaluate proof**. With the attachment field empty, Clause uses the [bundled cabinet photo](./public/samples/cabinets-installed.jpg). Review the verdict and choose the **Approve release** button for Milestone 2. The cap rises to **$9,000**. In mock mode this also records a **50 USDZ** simulated Metal payout and a **$5,000** simulated Airwallex deposit. Reopen **Sandbox** and retry **Home Depot** to see it approved. Close the drawer.
-5. Choose **Propose change order**. Keep the prefilled [sample email](./samples/change-order-email.txt) and choose **Propose change order** again inside the sheet. Review the changes and choose the approval button. The released cap rises to **$9,800**, the deadline moves to December 23, 2026, and Clause replaces the mandate with higher limits while carrying forward recorded spend.
-6. Reopen **Sandbox**, run **McLendon Hardware** dated December 24, and confirm the deadline decline cites the approved change order. Choose **Verify mandate on chain** to check the mandate. In mock mode the two refusals and one payment come from in-memory state.
+1. Read the [sample quote](./samples/quote-maple-street-cafe.txt) and issue the card. In **Sandbox**, run **Dunn Lumber ($1,840.50)**, **Kirkland Taphouse ($86.40)**, and **Home Depot ($2,500)** in order. Lumber passes. Lunch breaks the meals rule (§2.2), and Home Depot exceeds the remaining released funds (§1.1).
+2. In **Metal payout mandate**, try **Pay contractor over the cap** and **Pay a different wallet**. The mandate refuses both attempts. Close the drawer.
+3. Choose **Submit proof for Milestone 2**. Leave **Photos** selected and the attachment field empty to use the [bundled cabinet photo](./public/samples/cabinets-installed.jpg). Choose **Evaluate proof**, then **Approve release**. The cap rises to **$9,000**. The mocks record a **50 USDZ** payout and a **$5,000** simulated deposit. Retry Home Depot to see it pass.
+4. Choose **Propose change order** and use the [prefilled email](./samples/change-order-email.txt). Approve the proposal. The cap rises to **$9,800**, the deadline moves to **December 23, 2026**, and the replacement mandate carries forward prior spend.
+5. In **Sandbox**, run the **McLendon Hardware** preset dated December 24. The decline cites the change order. **Verify mandate on chain** shows the mock's two refusals and one payout.
 
 ### Travel and expense policy · Acme Robotics
 
-1. Choose **Travel policy + trip request** and **Read policy & trip** to load [the Acme policy and trip TR-2611](./samples/policy-acme-trip.txt). Review the extracted terms and choose **Approve & issue trip card**. In mock mode the card has a **$2,000** trip budget and a **$300** per-charge cap.
-2. Open **Sandbox** and run the presets for **Hyatt Regency Austin ($289)** and **Uber Trip ($34.60)**. Both pass. **Rainey St. Cocktail Bar ($142)** and **Best Buy #512 ($899)** are declined under §§4.2 and 4.1, respectively. The **Uber Trip** dated November 26 is declined under the expiry clause (§2.1).
-3. Turn on **Employee phone view** in the Sandbox drawer. Run **Uchi Austin ($480)** and confirm the decline cites the single-charge cap (§3.3). Close the drawer. In the phone view, keep the sample note naming the client and four attendees, then choose **Request an exception (§3.4)**.
-4. Choose **Approve exception** under **Live enforcement**. The sample per-attendee rule allows **$500** for four named attendees. Reopen **Sandbox** and retry **Uchi Austin**. The charge passes and the simulator restores the **$300** base cap. Run the same preset once more to see it declined again.
-5. Close the drawer, open **Expense report — auto-generated**, and choose **Export CSV**. With the two approved in-policy charges and one approved dinner, the report shows **$803.60** in approved spend, the blocked attempts, and **$0.00** owed to the traveler.
+1. Choose **Travel policy + trip request**, then **Read policy & trip**. Review [trip TR-2611](./samples/policy-acme-trip.txt) and choose **Approve & issue trip card**. The mock card has a **$2,000** budget and a **$300** per-charge cap.
+2. In **Sandbox**, try **Hyatt Regency Austin ($289)** and **Uber Trip ($34.60)**. Both pass. The cocktail bar and Best Buy presets decline under §§4.2 and 4.1. The November 26 Uber preset declines under the expiry clause (§2.1).
+3. Turn on **Employee phone view** in the Sandbox drawer and try **Uchi Austin ($480)**. The charge declines under §3.3. Close the drawer and use the prefilled note to **Request an exception (§3.4)** in the phone view.
+4. Under **Live enforcement**, choose **Approve exception**. Four named attendees at $125 each allow a **$500** cap. In **Sandbox**, retry Uchi Austin twice. The first retry passes and restores the **$300** cap. The second declines under §3.3.
+5. Close the drawer. Open **Expense report — auto-generated** and select **Export CSV**. With the hotel, rideshare, and one dinner approved, the report shows **$803.60** in company card spend and **$0.00** owed to the traveler.
 
-**Reset demo** deletes every job belonging to the signed-in user, including custom jobs, and clears the app process's mock gateways. Previously issued Airwallex sandbox cards and Metal testnet mandates remain on their respective services.
+**Reset demo** deletes the signed-in user's jobs and clears the process-wide mocks. On the public preview, all visitors share that identity. Use **New job** to start another sample.
 
-## Provider configuration
+## How Clause makes decisions
 
-For custom contractor quotes and trip policies, paste the document text into **New job**. Milestone proof accepts JPEG or PNG photos and PDFs. The workspace registers the following keys in **Settings → API keys**.
+- **AI reads.** Firebase AI Logic runs supported tasks in Chrome with Gemini Nano on-device or Gemini in the cloud. The source badge identifies what ran. Contest mode disables the server's model providers and agent chat. [Inference and data flow](./docs/INFERENCE.md)
+- **Code computes.** Schemas validate the extracted terms. Deterministic rules compute card caps, merchant categories, deadlines, and payout limits. When a decline maps to a rule, Clause cites its source. [Card rules](./server/clause/policy/cardRules.ts)
+- **People approve.** The job owner approves changes. Outside the mock demo, the owner must be on the configured policy-manager list to issue a trip card or approve an exception. The service records a stable payment ID to prevent duplicate milestone payouts on retry. Uncertain outcomes go to manual review. [Approval and release recovery](./DEVELOPING.md#approval-and-release-recovery)
 
-| Setting | Effect |
-| --- | --- |
-| `AWX_CLIENT_ID` and `AWX_API_KEY` | Enables Airwallex Issuing calls to `api.sandbox.airwallex.com`. All card transactions in the walkthrough are simulated. |
-| `AWX_CARDHOLDER_ID` | Optionally reuses a pre-created `DELEGATE` cardholder in the Airwallex sandbox. |
-| `GEMINI_API_KEY` | Enables Gemini for quote and policy extraction, proof review, change orders, and exception notes. |
-| `ANTHROPIC_API_KEY` | Enables Claude for those tasks when Gemini is unconfigured. |
+## Browser testing with Kane CLI
 
-The workspace can fall back to bundled fixtures on model failure. Offline proof evaluation checks the declared evidence kinds and uses a filename heuristic. Airwallex and model credentials are resolved for each request. If the credential vault is unavailable, the action returns a retryable error.
+Kane caught a real bug in the first walkthrough. The card correctly declined the **$6,000** charge, but **Explain** opened an empty chat. The fix moved the answer into the transaction row and validates it against the card rules. Kane passed on rerun. [Fix commit](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/22daf676)
 
-Metal defaults to mock mode independently of Airwallex. See the [development guide](./DEVELOPING.md) for the testnet account, CLI, and deployment settings.
+Kane flows 01–04 cover quote extraction, the decline explanation, change orders, and rejected proof. The offline check ran manually. The travel exception and CSV flow passed in desktop Chrome against a local build with mocks. It still awaits a hosted Kane run. [Commands and run history](./docs/KANE.md)
 
-## Hybrid inference
+## More docs
 
-Clause runs structured extraction and review in the browser via Firebase AI Logic hybrid inference (`app/lib/hybrid-ai.ts`): Chrome Gemini Nano on-device when available, and `gemini-3.5-flash-lite` in the cloud otherwise. Per-step inference modes can be tuned in Firebase Remote Config (`app/lib/firebase.ts`) while preserving the in-code defaults below. Every wrapper shows an `AiSourceBadge` in the UI, validates model output deterministically before applying state changes, and falls back to the existing server action path on failure or unavailability (offline rules only in contest mode; never in strict on-device mode).
-
-| Step | Remote Config key | Default mode | Browser wrapper & deterministic boundary | Cloud model & server fallback |
-| --- | --- | --- | --- | --- |
-| `contract` | `contract_mode` (`parse_mode`) | `PREFER_ON_DEVICE` (`prefer_on_device`; `prefer_in_cloud` above `parse_cloud_char_threshold`) | [`app/lib/clause-ai/parse.ts`](./app/lib/clause-ai/parse.ts) — renumbers duplicate milestone IDs, flags non-verbatim quotes, runs `validateTerms` | `gemini-3.5-flash-lite`; [`server/clause/contract/parser.ts`](./server/clause/contract/parser.ts) |
-| `expense` | `expense_mode` | `PREFER_ON_DEVICE` (`prefer_on_device`; `prefer_in_cloud` above `parse_cloud_char_threshold`) | [`app/lib/clause-ai/expense.ts`](./app/lib/clause-ai/expense.ts) — `validateExpenseTerms` checks calendar dates, 48h `card_expires`, and `per_charge_cap <= budget` | `gemini-3.5-flash-lite`; [`server/clause/expense/parser.ts`](./server/clause/expense/parser.ts) |
-| `exception` | `exception_mode` | `PREFER_ON_DEVICE` (`prefer_on_device`) | [`app/lib/clause-ai/exception.ts`](./app/lib/clause-ai/exception.ts) — AI explains only; `validateExceptionExtraction` computes `125 * attendees` cap | `gemini-3.5-flash-lite`; [`server/clause/expense/exception.ts`](./server/clause/expense/exception.ts) |
-| `changeOrder` | `changeOrder_mode` | `PREFER_IN_CLOUD` (`prefer_in_cloud`) | [`app/lib/clause-ai/changeOrder.ts`](./app/lib/clause-ai/changeOrder.ts) — AI drafts deltas/dates/quote only; `validateChangeOrderDraft` computes milestone `new_amount` & contract total | `gemini-3.5-flash-lite`; [`server/clause/contract/changeOrder.ts`](./server/clause/contract/changeOrder.ts) |
-| `evidence` | `evidence_mode` | `PREFER_IN_CLOUD` (`prefer_in_cloud`) | [`app/lib/clause-ai/evidence.ts`](./app/lib/clause-ai/evidence.ts) — downscales image input to one max-`768px` JPEG single-turn; code checks missing kinds & hashes originals | `gemini-3.5-flash-lite`; [`server/clause/milestones/evidence.ts`](./server/clause/milestones/evidence.ts) |
-
-### Contest mode (`CLAUSE_CONTEST_MODE=true`)
-
-The Firebase AI Logic contest requires generative AI to run through the Firebase AI Logic hybrid SDK. That SDK runs in the browser (and in the native apps); there is no server-side hybrid API, so the server can't honestly route a model call through it. With `CLAUSE_CONTEST_MODE=true` on the server:
-
-- `server/clause/llm.ts` reports no provider and `callTool` refuses, so no Gemini REST or Anthropic call is made, even if `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` are set ([`server/clause/contest-mode.ts`](./server/clause/contest-mode.ts)).
-- When the browser's Firebase AI Logic call can't run (no App Check token, quota, unsupported browser), the server fallback applies only its deterministic offline rules, badged **Offline rules**. Those rules read only the bundled samples; any other document gets a plain error instead of a model call.
-- App Check fails closed on the web. A production build without `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` never creates the Firebase AI Logic client: the app says "App Check not configured: cloud AI disabled", runs only Chrome's on-device model when it is ready, and otherwise uses the offline rules. The App Check debug-token code exists only in dev builds (`import.meta.env.DEV`) and is compiled out of production bundles, and the build drops `VITE_APPCHECK_DEBUG_TOKEN` from the inlined env.
-- PDF proof goes inline to cloud Gemini through Firebase AI Logic in the browser (`ONLY_IN_CLOUD`), not to the server.
-- The agent chat (a direct provider call) is hidden in the UI and refused server-side.
-- `list-jobs` returns `runtime.contestMode`, so the UI's fallback messages say what happened.
-
-The flag defaults to off, which keeps the original server providers. The hosted preview runs with it on. `test/contest-mode.test.ts` proves zero provider calls with both keys set.
-
-### What leaves the device
-
-| Mode | Document text / proof | What the server gets |
-| --- | --- | --- |
-| Hybrid (default), on-device model ready | Read by Gemini Nano in Chrome; nothing sent for reading | Structured terms when you create the job |
-| Hybrid, long document or no on-device model | Sent to cloud Gemini through Firebase AI Logic (App Check) | Structured terms |
-| Hybrid, Firebase AI Logic can't run | Sent to the Clause server: offline rules in contest mode, the server's own Gemini outside it (badge **Server**) | The raw text |
-| Strict on-device (`only_on_device`: account menu toggle, `?ai=strict`, or Remote Config) | Read only by Gemini Nano. If `LanguageModel.availability()` isn't `available`, nothing is called and the UI says **"On-device model not available. Nothing was sent."** Errors never fall back to the cloud or the server. PDFs are refused. | Structured terms only. Proof files are still uploaded with the on-device verdict when you submit, for hashing and release binding |
-| Offline | On-device if ready, otherwise **"Needs a connection. Nothing was sent."** A document read offline stays as a local draft; **Save draft** later sends only its terms | Nothing until you save |
-
-`test/strict-on-device.test.ts` proves strict mode makes zero SDK, network or server-fallback calls when the local model is missing, downloadable or unavailable, including after runtime and schema errors.
-
-- **Offline behavior:** When `navigator.onLine === false` and on-device inference is unavailable (or disabled by `ONLY_IN_CLOUD`), wrappers return a typed `"needs-connection"` result and the UI shows `"Needs a connection. Nothing was sent."` without guessing or contacting cloud/server endpoints.
-- **Privacy & telemetry:** [`app/lib/ai-log.ts`](./app/lib/ai-log.ts) writes fire-and-forget metadata (`step`, `mode`, `inferenceSource`, `latencyMs`, `validatorOk`, `createdAt`) under `users/{uid}/aiCalls` with Firebase Anonymous Auth and [`firestore.rules`](./firestore.rules). Raw contract text, expense text, exception notes, and proof images are never stored in Firestore.
-
-## Sandbox limits
-
-- Clause reads back the Airwallex sandbox card's spend limits after issuing or updating it. The action reports an error if Airwallex cannot confirm the planned limits, including a trip card's `ALL_TIME` budget and `PER_TRANSACTION` cap.
-- A manager exception temporarily raises the card-wide per-charge limit for all allowed merchant categories. Clause restores the base cap immediately after an approved simulated purchase or before the next simulated purchase after the two-hour window expires.
-- Airwallex sandbox uses its own clock. For future-dated expiry presets, Clause can temporarily move the sandbox card's validity window into the past and then attempts to restore it. The local mock evaluates the preset timestamp directly.
-- Mock card and payout state lives in the app process. Jobs persist in SQL, so create a fresh job to get a usable mock card after restarting the server.
-- Mock Metal verification reads in-memory state even when the UI says **Verify mandate on chain**. On-chain verification uses Metal testnet. The Airwallex deposit associated with a successful payout is a separate simulation.
-- Frozen cards, closed cards, and insufficient wallet funds can produce declines without a source clause citation.
-
-## Verified with Kane CLI
-
-[Kane CLI](https://www.testmuai.com/kane-cli/) runs four plain-English browser flows (`kane/flows/01`–`04`): quote → terms, an over-limit charge and its explanation, a change order, and a rejected proof photo. Offline mode (`05`) is a manual Chrome DevTools check, not Kane.
-
-Run `kane/run-flows.sh 06` on an isolated mock demo to cover the travel exception, cap restoration, and CSV export. The [Kane runbook](./docs/KANE.md) describes the new flow and records which checks have run.
-
-The real catch was flow 02: a $6,000 charge against the $4,000 released limit was correctly declined, but **Explain** opened an empty chat with no AI connected. The fix ([`22daf67`](https://github.com/Xuefeng-Zhu/clause-hybrid/commit/22daf676)) explains the decline inline, validated against the card rules, and Kane's rerun passed. Flow 04 now also asserts that a rejected proof reads `Proof rejected` and `$5,000 stays locked`, not `Proof received`. Kane ran in headless Chrome without Gemini Nano, so it checked the cloud, server and offline-rules paths, not on-device inference.
-
-Fastest check, after `AUTH_DISABLED=true corepack pnpm dev`:
-
-```bash
-npm i -g @testmuai/kane-cli && kane-cli login
-KANE_URL=http://localhost:8080/home kane/run-flows.sh 02   # use the URL your dev server prints, plus /home
-```
-
-Run-by-run results, the fix, and what is and isn't Kane: [docs/KANE.md](docs/KANE.md).
-
-## How it works
-
-- The model extracts document terms, reviews proof, and drafts change orders and exception requests. Code validates the extracted terms, computes card and payout controls, and maps provider outcomes to clauses when applicable.
-- Approval actions require access to the owner's job. For non-demo trip card issuance and exception approvals, the owner's authenticated email must also appear in the server's comma-separated `CLAUSE_POLICY_APPROVER_EMAILS`. The `dev@local.test` identity can approve in local development or preview with the mock gateway. Agent-invoked approvals pass through Agent-Native's human approval gate.
-- A release must match its pending approval ID, milestone, and amount. The workspace supplies the evidence SHA-256 and currency, which the action checks when provided.
-- The workspace and chat use typed actions in [`actions/`](./actions/). The job service lives in [`server/clause/`](./server/clause/) and stores jobs in the SQL `cl_jobs` table scoped by `owner_email`. See the [agent guide](./AGENTS.md) for the action reference and the [development guide](./DEVELOPING.md) for local checks and architecture.
+- [Development guide](./DEVELOPING.md) for app structure, local checks, mock and sandbox providers, and production setup.
+- [InstaBox preview](./deploy/README-instabox-preview.md) for the public demo and redeployment.
+- [Mobile app](./apps/mobile/README.md) for Expo setup and device testing.
+- [Agent guide](./AGENTS.md) for the action reference.
+- [Apache 2.0 license](./LICENSE).

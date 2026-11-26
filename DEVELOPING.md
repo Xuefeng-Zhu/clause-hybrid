@@ -1,19 +1,21 @@
-# Clause Development Guide
+# Developing Clause
 
 ## Local development
 
-Use Node.js `>=22.22.0` and pnpm `10.29.1`. If Corepack is installed, `corepack pnpm` selects the pinned version. [Package manifest](package.json)
+Use Node.js `22.22.0` or later and pnpm `10.29.1`. With Corepack installed, `corepack pnpm` uses the version pinned in the package manifest. [Package manifest](package.json)
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-The root pnpm workspace installs the web app. The [Expo app](apps/mobile/README.md) uses its own npm lockfile in `apps/mobile`.
+Open the URL printed by `pnpm dev`, usually `http://localhost:8080`. Choose **Continue as local dev** when prompted. The web app uses a local PGlite database in `data/pglite`. Both sample workflows run with the default mocks and require no provider keys. [Sample walkthroughs](README.md)
 
-Open the URL printed by `pnpm dev` (usually `http://localhost:8080`). Choose **Continue as local dev** when prompted. Clause uses PGlite at `data/pglite` by default. Both sample workflows are available without provider keys. Follow the contractor and travel-policy walkthroughs in the [README](README.md).
+The root pnpm workspace installs the web app. The Expo app uses a separate npm lockfile in `apps/mobile`. [Mobile setup](apps/mobile/README.md)
 
-Run the repository checks from the project root.
+## Checks
+
+Run these commands from the repository root.
 
 ```bash
 pnpm typecheck
@@ -22,20 +24,20 @@ pnpm build
 pnpm agent-native:doctor
 ```
 
-`pnpm typecheck` checks the generated app types and TypeScript. The test suite exercises contractor, policy, and Metal behavior with local fixtures and mocks. `pnpm agent-native:doctor` checks the framework's guards. A local build can report missing production database or auth settings while producing artifacts.
+Vitest uses local fixtures and mocks. Agent-Native Doctor checks the framework's repository guards. A local build can produce artifacts while reporting missing production database or auth settings. Use the Kane runbook for browser workflows. [Kane CLI runbook](docs/KANE.md)
 
-## Workspace and chat routes
+## Web architecture
 
-Clause uses React Router v8 with file-based routes, React 19, and the Agent-Native Nitro backend. SSR renders the shell. The workspace loads job data through client action hooks.
+Clause uses React Router v8, React 19, and the Agent-Native Nitro backend. The server renders the shell. The workspace loads jobs through client action hooks.
 
 | Route | Source and behavior |
 | --- | --- |
-| `/` | Sends the authenticated user to `/home`. [Sign-in landing](app/routes/_index.tsx) |
-| `/home` | Renders the workspace for contractor and travel-policy jobs. The selected job is reflected in `?job=<jobId>`. [Contract Jobs](app/routes/home.tsx) |
-| `/chat` | Opens a thread at `/chat/<threadId>`. [Chat entry](app/routes/chat._index.tsx) |
-| `/chat/<threadId>` | Mounts `ChatRouteContent`. [Full-screen chat](app/routes/chat.$threadId.tsx) |
+| `/` | Opens the sign-in landing and sends authenticated users to `/home`. [Sign-in route](app/routes/_index.tsx) |
+| `/home` | Shows contractor and travel-policy jobs. The selected job appears in `?job=<jobId>`. [Contract Jobs](app/routes/home.tsx) |
+| `/chat` | Opens a thread at `/chat/<threadId>` when chat is enabled. [Chat entry](app/routes/chat._index.tsx) |
+| `/chat/<threadId>` | Mounts `ChatRouteContent` when chat is enabled. [Full-screen chat](app/routes/chat.$threadId.tsx) |
 
-`app/components/layout/Layout.tsx` owns the app shell and contextual panel. On `/home`, `AgentInspector` wraps Toolkit's `AgentSidebar`. Full-screen chat uses `CoreAgentKitRoot`, `AgentKitChat`, and `CoreComposerRuntimeProvider` in `app/components/chat/ChatRouteContent.tsx`. Its transport comes from `@agent-native/core/client/agentkit-chat/transport`.
+`Layout.tsx` owns the app shell and contextual panel. On `/home`, `AgentInspector` wraps Toolkit's `AgentSidebar`. Full-screen chat uses `CoreAgentKitRoot`, `AgentKitChat`, and `CoreComposerRuntimeProvider` with the AgentKit chat transport. Contest mode hides the chat controls and redirects chat routes to `/home`. [Layout](app/components/layout/Layout.tsx) · [ChatRouteContent](app/components/chat/ChatRouteContent.tsx) · [Contest mode](docs/INFERENCE.md#contest-mode)
 
 ```text
 app/components/clause/     Contract Jobs workspace, card controls, and demo UI
@@ -53,13 +55,13 @@ test/                     Contract, policy, UI, Metal, and model fallback tests
 
 Add pages in `app/routes/` and keep them under the existing app shell. Use `meta()` for page metadata and `HydrateFallback()` where a route needs a loading shell. Keep authenticated job data behind scoped actions.
 
-Define an operation in `actions/<verb>-<resource>.ts` with `defineAction` from `@agent-native/core/action`. Set `http: { method: "GET" }` for read actions. React callers use `useActionQuery` for reads and `useActionMutation` for writes. The framework mounts HTTP-enabled actions at `/_agent-native/actions/<name>`. Use `pnpm action --help` for CLI usage. The agent guide lists Clause's action arguments and owner approval rules. [AGENTS.md](AGENTS.md)
+Define operations in `actions/<verb>-<resource>.ts` with `defineAction` from `@agent-native/core/action`. Set `http: { method: "GET" }` for read actions. React callers use `useActionQuery` for reads and `useActionMutation` for writes. HTTP-enabled actions are available at `/_agent-native/actions/<name>`. Use `pnpm action --help` for CLI usage. [Action arguments and approval rules](AGENTS.md#actions)
 
 Reserve `server/routes/api/` for protocol endpoints such as streaming, OAuth callbacks, webhooks, or multipart transfers. Keep shared logic in actions or service modules. Register startup behavior in `server/plugins/` through a Nitro plugin.
 
 The `cl_jobs` table stores jobs, including travel-policy jobs. `SqlJobStore` scopes reads and writes to the authenticated `owner_email`. Define SQL data with Drizzle's `pg-core` and use additive, PostgreSQL-compatible migrations in `server/plugins/db.ts`. The PGlite database exercises the same app schema locally.
 
-Use the version-matched framework docs and public package entry points for framework APIs. After installing dependencies, the local action runner can read the optional Extensions capability docs as well as the actions and auth guides.
+Use the local, version-matched framework docs and public package entry points for framework APIs.
 
 ```bash
 pnpm action docs-search --slug actions-defining
@@ -69,22 +71,24 @@ pnpm action docs-search --slug extensions
 
 ## Provider modes
 
-The mock Airwallex gateway, mock Metal rail, and offline parsing fixtures are the defaults on a clean setup. Airwallex and Metal modes are selected independently. The workspace's sandbox tools show the Airwallex mode, and the contractor mandate panel shows the Metal mode.
+With a clean setup, Clause uses the Airwallex and Metal mocks and the bundled parsing fixtures. Configure the two gateways independently. The workspace sandbox shows the Airwallex mode, and the contractor mandate panel shows the Metal mode.
+
+Jobs persist in SQL and the mocks keep cards and mandates in memory. Start a new sample job after restarting the app to get a usable mock card. **Reset demo** deletes the signed-in user's jobs and clears the mocks. Previously issued sandbox cards and testnet artifacts remain on their respective services.
 
 ### Airwallex sandbox
 
-Set `AWX_CLIENT_ID` and `AWX_API_KEY` in **Settings → API keys** to use the sandbox API. `AWX_CARDHOLDER_ID` can point to an existing sandbox `DELEGATE` cardholder. The server also accepts the Airwallex credentials as an environment fallback for local or deployment configuration. Use the registered secret store for user credentials. The provider adapter targets `api.sandbox.airwallex.com` and the demo uses simulated transactions.
+Set `AWX_CLIENT_ID` and `AWX_API_KEY` in **Settings → API keys** to use `api.sandbox.airwallex.com`. Set `AWX_CARDHOLDER_ID` to reuse an existing sandbox `DELEGATE` cardholder. Use the registered secret store for user credentials. The server also accepts deployment environment values for Airwallex.
 
-- Policy cards require both `PER_TRANSACTION` and `ALL_TIME` limits. Clause reads back the issuer controls after a write and displays verification on the card detail. If readback fails or the controls differ, Clause attempts to close a newly issued card or freeze an existing card and reports the outcome.
-- The two-hour exception raises the card-wide `PER_TRANSACTION` cap. Clause restores the base cap during a simulated charge, before the first simulated swipe after expiry or after the next approved simulated swipe. This happens through the app's simulation flow.
-- The sandbox uses its own clock. A future after-deadline simulation can temporarily change the sandbox card's active window and then attempt to restore it. Check the resulting card controls if this step fails.
-- Clause saves the Metal payout outcome before attempting a best-effort simulated deposit into an Airwallex sandbox global account.
+- **Issuer verification.** Clause reads back the issuer controls after a write and shows the result in the card details. A trip card requires both `PER_TRANSACTION` and `ALL_TIME` limits. If verification fails, Clause attempts to close a newly issued card or freeze an existing card and reports the outcome.
+- **Exception limits.** The two-hour exception raises the card-wide `PER_TRANSACTION` cap across allowed merchant categories. The simulator restores the base cap after the next approved charge, including one under the original cap, or before the first simulated charge after expiry.
+- **Expiry simulation.** Airwallex uses its own clock. To simulate a future charge after the deadline, Clause can temporarily change the sandbox card's active window and then attempt to restore it. Check the issuer controls if that step fails.
+- **Deposit simulation.** Clause saves the Metal payout outcome before attempting a simulated deposit into an Airwallex sandbox global account.
 
-For optional provider smoke testing, supply the sandbox credentials through the command environment and run `pnpm smoke:sandbox`. It issues a sandbox card, runs the contractor sequence, and closes the card at the end of a successful run. Routine checks and the README walkthroughs use the mocks on a clean setup.
+To smoke-test the provider, supply sandbox credentials through the command environment and run `pnpm smoke:sandbox`. This creates a sandbox card, runs the contractor sequence with simulated transactions, and closes the card at the end of a successful run.
 
 ### Metal testnet
 
-Set `METAL_MODE=testnet`, `METAL_RPC_URL`, and `METAL_ACCOUNT` together to select the testnet rail. The runtime uses the mock if any of these settings are missing. The server must have access to the following testnet resources.
+Set `METAL_MODE=testnet`, `METAL_RPC_URL`, and `METAL_ACCOUNT` together to select the testnet rail. The runtime uses the mock if any are missing. Configure the testnet resources below on the server.
 
 | Setting | Required resource |
 | --- | --- |
@@ -94,22 +98,24 @@ Set `METAL_MODE=testnet`, `METAL_RPC_URL`, and `METAL_ACCOUNT` together to selec
 | `METAL_CLI_PREFIX` | Installation directory where `npx --prefix "$METAL_CLI_PREFIX" metal-agent` can run the CLI. Defaults to `/workspace/tools/metal`. |
 | `METAL_DIR` | Writable directory outside the repository containing `owner-key.json` and `owner-key.issuer.public.json`. Clause writes per-job mandate files under `jobs/`. Defaults to `/workspace/work/metal`. |
 
-Contract approval can bind a testnet mandate, and milestone approval can submit a testnet `*USDZ` payout. The Metal mock verifies its in-memory mandate even when the result says “Verified on chain.” In testnet mode the verifier invokes the CLI, and the reported refusal count can include locally recorded events.
+Contract approval can bind a testnet mandate, and milestone approval can submit a testnet `*USDZ` payout. Testnet verification invokes the Metal CLI, and its refusal count can include locally recorded events. The **Verified on chain** label in mock mode reflects in-memory verification.
 
 ### Models and credentials
 
-`GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are registered for the Clause document workflows. Gemini takes precedence when configured. Use the Agent-Native provider setup to enable chat. Bundled inputs can fall back to offline fixtures, and offline evidence review uses declared file kinds and a filename heuristic.
+Set `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` in **Settings → API keys** to configure a server model for Clause document workflows. Gemini takes precedence when configured. Configure a chat provider separately through the Agent-Native settings. Bundled documents can fall back to offline fixtures, and offline evidence review uses declared file kinds and a filename heuristic. [Hybrid inference and fallback behavior](docs/INFERENCE.md)
 
 Clause resolves Airwallex and model keys for each authenticated request. A credential-store lookup failure returns `503 credential_store_unavailable` and can be retried. Contest mode skips lookup of direct model-provider keys.
 
-### Approval and release recovery
+## Approval and release recovery
 
 Approval actions require a signed-in job owner and the framework's human approval gate. For a signed-in policy manager to issue a trip card or approve an exception, add their email to the deployment's `CLAUSE_POLICY_APPROVER_EMAILS` list. The job must belong to that account. The built-in demo identity can approve policy fixtures locally or in an auth-disabled preview using mock Airwallex.
 
-Clause claims a milestone approval in the job record before changing the issuer controls. Matching a completed approval returns the saved job without dispatching a second payout. If a running attempt is interrupted or a provider call fails, inspect the recorded stage and payment ID via `get-job`. Verify the issuer controls and the Metal payment before taking any further action. The job holds the claim for manual reconciliation.
+Clause records a milestone approval claim before changing issuer controls. A matching retry after completion returns the saved job and preserves the existing payout. If an attempt is interrupted or a provider call fails, `get-job` reports the stage and payment ID. Verify the issuer controls and the Metal payment using that ID. Clause holds the claim for manual reconciliation.
 
 ## Production database and authentication
 
-For a standalone Node build, run `pnpm build` and then `pnpm start`. Configure the production environment with a persistent PostgreSQL `DATABASE_URL` and stable `BETTER_AUTH_SECRET` before deploying. The public auth URL is inferred by default, with `BETTER_AUTH_URL` available as an override. The Netlify build maps `NETLIFY_DATABASE_URL` to `DATABASE_URL` when supplied and runs `pnpm migrate:production` for production deployments. [Netlify configuration](netlify.toml)
+For a standalone Node deployment, configure a persistent PostgreSQL `DATABASE_URL` and stable `BETTER_AUTH_SECRET`, then run `pnpm build` and `pnpm start`. Clause infers the public auth URL by default. Set `BETTER_AUTH_URL` to override it.
 
-The optional `AUTH_DISABLED=true` setting gives local or preview requests a shared identity. Use it only for isolated development or demo instances. Keep production secrets, provider keys, and Metal key material out of tracked files and logs. [Local environment example](.env.example)
+The Netlify build maps `NETLIFY_DATABASE_URL` to `DATABASE_URL` when supplied and runs `pnpm migrate:production` for production deployments. [Netlify configuration](netlify.toml)
+
+Use `AUTH_DISABLED=true` only for isolated development or disposable previews. It gives all requests a shared identity. Store deployment and provider secrets outside tracked files. [Environment example](.env.example) · [InstaBox demo runbook](deploy/README-instabox-preview.md)
